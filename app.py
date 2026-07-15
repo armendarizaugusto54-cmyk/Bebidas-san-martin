@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+import shutil
 import sqlite3
 
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
@@ -17,8 +18,11 @@ TABLE_MODULES = {
     "categorias": "Categorias",
     "marcas": "Marcas",
     "proveedores": "Proveedores",
+    "compras": "Compras",
     "ventas": "Ventas",
     "caja": "Caja",
+    "reportes": "Reportes",
+    "configuracion": "Configuracion",
     "usuarios": "Usuarios",
 }
 
@@ -201,11 +205,11 @@ def dashboard():
 @app.get("/api/options")
 def options():
     allowed = {
-        "categorias": can("Categorias") or can("Productos") or can("Ventas"),
-        "marcas": can("Marcas") or can("Productos") or can("Ventas"),
+        "categorias": can("Categorias") or can("Productos") or can("Ventas") or can("Compras"),
+        "marcas": can("Marcas") or can("Productos") or can("Ventas") or can("Compras"),
         "clientes": can("Clientes") or can("Ventas"),
-        "proveedores": can("Proveedores") or can("Productos"),
-        "productos": can("Productos") or can("Ventas"),
+        "proveedores": can("Proveedores") or can("Productos") or can("Compras"),
+        "productos": can("Productos") or can("Ventas") or can("Compras"),
     }
     result = {}
     if allowed["categorias"]:
@@ -243,6 +247,13 @@ def list_table(table):
         "categorias": "SELECT * FROM categorias ORDER BY nombre",
         "marcas": "SELECT * FROM marcas ORDER BY nombre",
         "proveedores": "SELECT * FROM proveedores ORDER BY nombre",
+        "compras": """
+            SELECT c.*, p.nombre proveedor
+            FROM compras c
+            LEFT JOIN proveedores p ON p.id=c.proveedor_id
+            ORDER BY c.id DESC
+            LIMIT 100
+        """,
         "ventas": """
             SELECT v.*, c.nombre cliente
             FROM ventas v
@@ -377,6 +388,81 @@ def save_simple(table):
     return jsonify({"ok": True})
 
 
+@app.post("/api/compras")
+def save_compra():
+    if not can("Compras", "agregar"):
+        return forbidden()
+    data = request.json or {}
+    proveedor_id = data.get("proveedor_id") or None
+    producto_id = data.get("producto_id")
+    cantidad = money(data.get("cantidad"))
+    precio = money(data.get("precio"))
+    factura = data.get("factura", "").strip()
+    observaciones = data.get("observaciones", "").strip()
+    if not producto_id or cantidad <= 0:
+        return jsonify({"error": "Seleccione producto y cantidad."}), 400
+    total = cantidad * precio
+    with db() as conn:
+        try:
+            conn.execute("BEGIN")
+            compra_id = conn.execute(
+                """
+                INSERT INTO compras(fecha,proveedor_id,factura,total,observaciones)
+                VALUES(?,?,?,?,?)
+                """,
+                (
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    proveedor_id,
+                    factura,
+                    total,
+                    observaciones,
+                ),
+            ).lastrowid
+            stock = conn.execute(
+                "SELECT stock FROM productos WHERE id=?", (producto_id,)
+            ).fetchone()
+            if not stock:
+                raise ValueError("Producto inexistente.")
+            stock_anterior = float(stock["stock"] or 0)
+            stock_nuevo = stock_anterior + cantidad
+            conn.execute(
+                """
+                INSERT INTO detalle_compras(compra_id,producto_id,cantidad,precio,subtotal)
+                VALUES(?,?,?,?,?)
+                """,
+                (compra_id, producto_id, cantidad, precio, total),
+            )
+            conn.execute(
+                """
+                UPDATE productos
+                SET stock=?, precio_compra=?
+                WHERE id=?
+                """,
+                (stock_nuevo, precio, producto_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO movimientos_stock
+                (fecha,producto_id,tipo,cantidad,stock_anterior,stock_nuevo,observacion)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    producto_id,
+                    "COMPRA",
+                    cantidad,
+                    stock_anterior,
+                    stock_nuevo,
+                    f"Compra {compra_id}",
+                ),
+            )
+            conn.commit()
+        except Exception as exc:
+            conn.rollback()
+            return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "compra_id": compra_id})
+
+
 @app.post("/api/proveedores")
 def save_proveedor():
     data = request.json or {}
@@ -480,6 +566,22 @@ def save_venta():
                     "UPDATE productos SET stock=stock-? WHERE id=?",
                     (cantidad, item["producto_id"]),
                 )
+                conn.execute(
+                    """
+                    INSERT INTO movimientos_stock
+                    (fecha,producto_id,tipo,cantidad,stock_anterior,stock_nuevo,observacion)
+                    VALUES(?,?,?,?,?,?,?)
+                    """,
+                    (
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        item["producto_id"],
+                        "VENTA",
+                        cantidad,
+                        float(product["stock"] or 0),
+                        float(product["stock"] or 0) - cantidad,
+                        f"Venta {venta_id}",
+                    ),
+                )
             if tipo == "CUENTA CORRIENTE":
                 saldo = conn.execute(
                     "SELECT saldo FROM clientes WHERE id=?", (cliente_id,)
@@ -523,7 +625,102 @@ def save_venta():
         except Exception as exc:
             conn.rollback()
             return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "venta_id": venta_id})
+    return jsonify({"ok": True, "venta_id": venta_id, "total": total})
+
+
+@app.get("/api/ventas/<int:venta_id>/detalle")
+def venta_detalle(venta_id):
+    if not can("Ventas"):
+        return forbidden()
+    venta = one(
+        """
+        SELECT v.*, c.nombre cliente
+        FROM ventas v
+        LEFT JOIN clientes c ON c.id=v.cliente_id
+        WHERE v.id=?
+        """,
+        (venta_id,),
+    )
+    if not venta:
+        return jsonify({"error": "Venta inexistente."}), 404
+    detalle = rows(
+        """
+        SELECT d.*, p.codigo, p.nombre producto
+        FROM detalle_ventas d
+        LEFT JOIN productos p ON p.id=d.producto_id
+        WHERE d.venta_id=?
+        ORDER BY d.id
+        """,
+        (venta_id,),
+    )
+    return jsonify({"venta": venta, "detalle": detalle})
+
+
+@app.get("/api/reportes")
+def reportes():
+    if not can("Reportes"):
+        return forbidden()
+    desde = request.args.get("desde") or datetime.now().strftime("%Y-%m-%d")
+    hasta = request.args.get("hasta") or desde
+    params = (desde, hasta)
+    resumen = one(
+        """
+        SELECT COUNT(*) ventas, COALESCE(SUM(total),0) total
+        FROM ventas
+        WHERE date(fecha) BETWEEN date(?) AND date(?)
+        """,
+        params,
+    )
+    medios = rows(
+        """
+        SELECT tipo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
+        FROM ventas
+        WHERE date(fecha) BETWEEN date(?) AND date(?)
+        GROUP BY tipo
+        ORDER BY total DESC
+        """,
+        params,
+    )
+    top = rows(
+        """
+        SELECT p.codigo, p.nombre, SUM(d.cantidad) cantidad, SUM(d.subtotal) total
+        FROM detalle_ventas d
+        JOIN ventas v ON v.id=d.venta_id
+        LEFT JOIN productos p ON p.id=d.producto_id
+        WHERE date(v.fecha) BETWEEN date(?) AND date(?)
+        GROUP BY d.producto_id
+        ORDER BY cantidad DESC
+        LIMIT 10
+        """,
+        params,
+    )
+    bajos = rows(
+        """
+        SELECT codigo,nombre,marca,stock,stock_minimo
+        FROM productos
+        WHERE stock <= stock_minimo
+        ORDER BY stock ASC,nombre
+        """
+    )
+    movimientos = rows(
+        """
+        SELECT m.fecha,m.tipo,m.cantidad,m.stock_anterior,m.stock_nuevo,
+               m.observacion,p.codigo,p.nombre producto
+        FROM movimientos_stock m
+        LEFT JOIN productos p ON p.id=m.producto_id
+        ORDER BY m.id DESC
+        LIMIT 30
+        """
+    )
+    return jsonify(
+        {
+            "resumen": resumen,
+            "medios": medios,
+            "top": top,
+            "bajos": bajos,
+            "movimientos": movimientos,
+        }
+    )
 
 
 @app.get("/api/usuarios/<int:user_id>/permisos")
@@ -686,6 +883,18 @@ def cerrar_caja():
         (cierre, cierre - teorico, caja["id"]),
     )
     return jsonify({"ok": True})
+
+
+@app.post("/api/backup")
+def backup():
+    if not can("Configuracion", "agregar") and not can("Configuracion", "modificar"):
+        return forbidden()
+    backup_dir = os.path.join(BASE_DIR, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    filename = f"bebidas_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    target = os.path.join(backup_dir, filename)
+    shutil.copy2(DB_PATH, target)
+    return jsonify({"ok": True, "archivo": os.path.join("backups", filename)})
 
 
 if __name__ == "__main__":

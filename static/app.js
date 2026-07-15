@@ -1,16 +1,19 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-let state = { options: {}, productos: [], ticket: [], current: "inicio", permisos: {}, user: null };
+let state = { options: {}, productos: [], ticket: [], current: "inicio", permisos: {}, user: null, selectedProductId: null, lastSale: null, lastReport: null };
 const viewModules = {
   inicio: "Dashboard",
   ventas: "Ventas",
+  compras: "Compras",
   productos: "Productos",
   clientes: "Clientes",
   caja: "Caja",
   categorias: "Categorias",
   marcas: "Marcas",
   proveedores: "Proveedores",
+  reportes: "Reportes",
+  configuracion: "Configuracion",
   usuarios: "Usuarios",
 };
 const permissionModules = ["Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Categorias", "Marcas", "Proveedores", "Compras", "Reportes", "Usuarios", "Configuracion"];
@@ -77,6 +80,82 @@ function fillForm(id, row) {
     if (input) input.value = v ?? "";
   });
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function currentProduct() {
+  const id = state.selectedProductId || $("#venta-producto")?.value;
+  return state.productos.find((x) => String(x.id) === String(id));
+}
+
+function setVentaProduct(product) {
+  if (!product) return;
+  state.selectedProductId = product.id;
+  $("#venta-producto").value = product.id;
+  $("#venta-producto-nombre").value = `${product.codigo} - ${product.nombre} (${money(product.precio_venta)})`;
+  $("#venta-cantidad").focus();
+}
+
+function renderProductSearch() {
+  const q = $("#producto-modal-search").value.trim().toLowerCase();
+  const productos = state.productos
+    .filter((p) => [p.codigo, p.nombre, p.marca, p.categoria_nombre].join(" ").toLowerCase().includes(q))
+    .slice(0, 80);
+  $("#producto-modal-table").innerHTML = `
+    <thead>
+      <tr><th>Codigo</th><th>Producto</th><th>Marca</th><th>Precio</th><th>Stock</th><th></th></tr>
+    </thead>
+    <tbody>
+      ${productos.map((p) => `
+        <tr data-product-row="${p.id}">
+          <td>${p.codigo || ""}</td>
+          <td>${p.nombre || ""}</td>
+          <td>${p.marca || ""}</td>
+          <td>${money(p.precio_venta)}</td>
+          <td>${p.stock ?? ""}</td>
+          <td><button type="button" data-select-product="${p.id}">Seleccionar</button></td>
+        </tr>`).join("") || `<tr><td colspan="6">Sin productos</td></tr>`}
+    </tbody>`;
+}
+
+function openProductSearch() {
+  if (state.current !== "ventas") return;
+  $("#producto-modal").hidden = false;
+  $("#producto-modal-search").value = "";
+  renderProductSearch();
+  $("#producto-modal-search").focus();
+}
+
+function closeProductSearch() {
+  $("#producto-modal").hidden = true;
+}
+
+function ticketTotal() {
+  return state.ticket.reduce((a, i) => a + Number(i.subtotal), 0);
+}
+
+function ticketQuantityFor(productId) {
+  return state.ticket
+    .filter((i) => String(i.producto_id) === String(productId))
+    .reduce((a, i) => a + Number(i.cantidad), 0);
+}
+
+function downloadText(filename, text) {
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function toCsv(rows) {
+  if (!rows.length) return "";
+  const headers = Object.keys(rows[0]);
+  const esc = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+  return [headers.join(","), ...rows.map((row) => headers.map((h) => esc(row[h])).join(","))].join("\n");
 }
 
 async function loadOptions() {
@@ -214,8 +293,13 @@ async function loadSimple(kind) {
 async function loadVentas() {
   await loadOptions();
   const clienteSelect = $("#venta-form").elements.cliente_id;
-  clienteSelect.innerHTML = state.options.clientes.map((c) => `<option value="${c.id}">${c.nombre}</option>`).join("");
+  clienteSelect.innerHTML = (state.options.clientes || []).map((c) => `<option value="${c.id}">${c.nombre}</option>`).join("");
   $("#venta-producto").innerHTML = state.productos.map((p) => `<option value="${p.id}">${p.codigo} - ${p.nombre} (${money(p.precio_venta)})</option>`).join("");
+  if (!currentProduct() && state.productos.length) {
+    setVentaProduct(state.productos[0]);
+  } else if (currentProduct()) {
+    setVentaProduct(currentProduct());
+  }
   const ventas = await api("/api/ventas");
   table($("#tabla-ventas"), [
     { key: "id", label: "Nro" },
@@ -234,7 +318,27 @@ function renderTicket() {
     { key: "precio", label: "Precio", format: money },
     { key: "subtotal", label: "Subtotal", format: money },
   ], state.ticket, (r) => `<button class="danger" data-remove-item="${r.producto_id}">Quitar</button>`);
-  $("#ticket-total").textContent = `TOTAL: ${money(state.ticket.reduce((a, i) => a + Number(i.subtotal), 0))}`;
+  const total = ticketTotal();
+  const items = state.ticket.reduce((a, i) => a + Number(i.cantidad), 0);
+  const pago = Number($("#venta-pago").value || 0);
+  $("#ticket-total").textContent = `TOTAL: ${money(total)}`;
+  $("#ticket-items").textContent = `${items} item${items === 1 ? "" : "s"}`;
+  $("#ticket-vuelto").textContent = `Vuelto: ${money(Math.max(pago - total, 0))}`;
+}
+
+async function loadCompras() {
+  await loadOptions();
+  $("#compra-form").elements.proveedor_id.innerHTML = (state.options.proveedores || []).map((p) => `<option value="${p.id}">${p.nombre}</option>`).join("");
+  $("#compra-form").elements.producto_id.innerHTML = state.productos.map((p) => `<option value="${p.id}">${p.codigo} - ${p.nombre}</option>`).join("");
+  const compras = await api("/api/compras");
+  table($("#tabla-compras"), [
+    { key: "id", label: "Nro" },
+    { key: "fecha", label: "Fecha" },
+    { key: "proveedor", label: "Proveedor" },
+    { key: "factura", label: "Factura" },
+    { key: "total", label: "Total", format: money },
+    { key: "observaciones", label: "Observaciones" },
+  ], compras);
 }
 
 async function loadCaja() {
@@ -257,6 +361,49 @@ async function loadCaja() {
   ], await api("/api/caja"));
 }
 
+async function loadReportes(ev) {
+  if (ev) ev.preventDefault();
+  const formData = Object.fromEntries(new FormData($("#reportes-form")));
+  const today = new Date().toISOString().slice(0, 10);
+  const desde = formData.desde || today;
+  const hasta = formData.hasta || desde;
+  $("#reportes-form").elements.desde.value = desde;
+  $("#reportes-form").elements.hasta.value = hasta;
+  const data = await api(`/api/reportes?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`);
+  state.lastReport = data;
+  $("#rep-ventas").textContent = data.resumen.ventas || 0;
+  $("#rep-total").textContent = money(data.resumen.total);
+  $("#rep-bajos").textContent = data.bajos.length;
+  $("#rep-top").textContent = data.top[0]?.nombre || "-";
+  table($("#tabla-medios"), [
+    { key: "tipo", label: "Medio" },
+    { key: "cantidad", label: "Ventas" },
+    { key: "total", label: "Total", format: money },
+  ], data.medios);
+  table($("#tabla-top"), [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "cantidad", label: "Cantidad" },
+    { key: "total", label: "Total", format: money },
+  ], data.top);
+  table($("#tabla-movimientos"), [
+    { key: "fecha", label: "Fecha" },
+    { key: "tipo", label: "Tipo" },
+    { key: "producto", label: "Producto" },
+    { key: "cantidad", label: "Cantidad" },
+    { key: "stock_anterior", label: "Antes" },
+    { key: "stock_nuevo", label: "Despues" },
+    { key: "observacion", label: "Obs." },
+  ], data.movimientos);
+  table($("#tabla-reporte-bajos"), [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "marca", label: "Marca" },
+    { key: "stock", label: "Stock" },
+    { key: "stock_minimo", label: "Minimo" },
+  ], data.bajos);
+}
+
 async function refresh() {
   const current = state.current;
   if (!canView(current)) return;
@@ -264,9 +411,11 @@ async function refresh() {
   if (current === "productos") return loadProductos();
   if (current === "clientes") return loadClientes();
   if (current === "ventas") return loadVentas();
+  if (current === "compras") return loadCompras();
   if (current === "caja") return loadCaja();
   if (current === "proveedores") return loadProveedor();
   if (current === "usuarios") return loadUsuarios();
+  if (current === "reportes") return loadReportes();
   if (current === "categorias" || current === "marcas") return loadSimple(current);
 }
 
@@ -365,6 +514,16 @@ function setupForms() {
     $$("input,select,button", $("#usuario-form")).forEach((el) => el.disabled = true);
     $$("input,select,button", $("#permisos-form")).forEach((el) => el.disabled = true);
   }
+
+  $("#compra-form").onsubmit = async (ev) => {
+    ev.preventDefault();
+    await api("/api/compras", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
+    ev.target.reset();
+    await loadCompras();
+    await loadDashboard();
+    alert("Compra registrada.");
+  };
+  $("#reportes-form").onsubmit = loadReportes;
 }
 
 document.addEventListener("click", async (ev) => {
@@ -408,16 +567,56 @@ document.addEventListener("click", async (ev) => {
     state.ticket = state.ticket.filter((i) => String(i.producto_id) !== remove);
     renderTicket();
   }
+  const selectProduct = ev.target.dataset.selectProduct;
+  if (selectProduct) {
+    const product = state.productos.find((p) => String(p.id) === String(selectProduct));
+    setVentaProduct(product);
+    closeProductSearch();
+  }
+  if (ev.target.closest("[data-product-row]") && !ev.target.dataset.selectProduct) {
+    const product = state.productos.find((p) => String(p.id) === String(ev.target.closest("[data-product-row]").dataset.productRow));
+    setVentaProduct(product);
+    closeProductSearch();
+  }
 });
 
 $("#search").addEventListener("input", refresh);
+$("#venta-pago").addEventListener("input", renderTicket);
+$("#venta-codigo").addEventListener("keydown", (ev) => {
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  const code = ev.target.value.trim().toLowerCase();
+  const product = state.productos.find((p) => String(p.codigo || "").toLowerCase() === code);
+  if (!product) return alert("Producto no encontrado.");
+  setVentaProduct(product);
+  $("#add-item").click();
+  ev.target.value = "";
+});
+$("#buscar-producto").addEventListener("click", openProductSearch);
+$("#cerrar-producto-modal").addEventListener("click", closeProductSearch);
+$("#producto-modal-search").addEventListener("input", renderProductSearch);
+$("#producto-modal").addEventListener("click", (ev) => {
+  if (ev.target.id === "producto-modal") closeProductSearch();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "F3" && state.current === "ventas") {
+    ev.preventDefault();
+    openProductSearch();
+  }
+  if (ev.key === "Escape" && !$("#producto-modal").hidden) {
+    closeProductSearch();
+  }
+});
 
 $("#add-item").onclick = () => {
-  const id = $("#venta-producto").value;
-  const p = state.productos.find((x) => String(x.id) === String(id));
+  const p = currentProduct();
   if (!p) return;
   const cantidad = Number($("#venta-cantidad").value || 1);
-  const found = state.ticket.find((i) => String(i.producto_id) === String(id));
+  if (cantidad <= 0) return alert("Ingrese una cantidad valida.");
+  if (ticketQuantityFor(p.id) + cantidad > Number(p.stock || 0)) {
+    return alert(`Stock insuficiente. Disponible: ${p.stock}`);
+  }
+  const found = state.ticket.find((i) => String(i.producto_id) === String(p.id));
   if (found) {
     found.cantidad += cantidad;
     found.subtotal = found.cantidad * found.precio;
@@ -429,13 +628,44 @@ $("#add-item").onclick = () => {
 
 $("#venta-form").onsubmit = async (ev) => {
   ev.preventDefault();
+  if (!state.ticket.length) return alert("Agregue productos al ticket.");
   const data = Object.fromEntries(new FormData(ev.target));
   data.items = state.ticket;
-  await api("/api/ventas", { method: "POST", body: JSON.stringify(data) });
+  const result = await api("/api/ventas", { method: "POST", body: JSON.stringify(data) });
+  state.lastSale = await api(`/api/ventas/${result.venta_id}/detalle`);
   state.ticket = [];
   await loadVentas();
   await loadDashboard();
-  alert("Venta registrada.");
+  alert(`Venta registrada. Nro ${result.venta_id}`);
+};
+
+$("#print-ticket").onclick = () => {
+  if (!state.lastSale) return alert("Todavia no hay un ticket para imprimir.");
+  const sale = state.lastSale.venta;
+  const lines = state.lastSale.detalle.map((item) => `
+    <tr>
+      <td>${item.cantidad}</td>
+      <td>${item.producto}</td>
+      <td>${money(item.precio)}</td>
+      <td>${money(item.subtotal)}</td>
+    </tr>`).join("");
+  const win = window.open("", "ticket", "width=420,height=650");
+  win.document.write(`
+    <title>Ticket ${sale.id}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:16px}
+      h1{font-size:20px;margin:0 0 8px}
+      table{width:100%;border-collapse:collapse;font-size:13px}
+      td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left}
+      .total{text-align:right;font-size:18px;font-weight:bold;margin-top:12px}
+    </style>
+    <h1>Bebidas San Martin</h1>
+    <p>Ticket Nro ${sale.id}<br>Fecha: ${sale.fecha}<br>Cliente: ${sale.cliente || ""}<br>Medio: ${sale.tipo}</p>
+    <table><thead><tr><th>Cant</th><th>Producto</th><th>Precio</th><th>Subt.</th></tr></thead><tbody>${lines}</tbody></table>
+    <div class="total">TOTAL ${money(sale.total)}</div>
+  `);
+  win.document.close();
+  win.print();
 };
 
 $("#caja-form").onsubmit = async (ev) => {
@@ -454,6 +684,25 @@ $("#cierre-form").onsubmit = async (ev) => {
   await api("/api/caja/cerrar", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
   ev.target.reset();
   await loadCaja();
+};
+
+$("#crear-backup").onclick = async () => {
+  const result = await api("/api/backup", { method: "POST", body: "{}" });
+  $("#backup-status").textContent = `Backup creado: ${result.archivo}`;
+};
+
+$("#export-productos").onclick = () => {
+  downloadText("productos.csv", toCsv(state.productos));
+};
+
+$("#export-report").onclick = () => {
+  if (!state.lastReport) return alert("Actualiza el reporte primero.");
+  const rows = [
+    ...state.lastReport.medios.map((r) => ({ tipo: "medio_pago", ...r })),
+    ...state.lastReport.top.map((r) => ({ tipo: "producto_vendido", ...r })),
+    ...state.lastReport.bajos.map((r) => ({ tipo: "stock_bajo", ...r })),
+  ];
+  downloadText("reporte.csv", toCsv(rows));
 };
 
 (async function init() {

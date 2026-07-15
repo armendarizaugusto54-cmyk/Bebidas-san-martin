@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bebidas San Martin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-panel">
+    <h1>Bebidas San Martin</h1>
+    <p>Sistema online</p>
+    {% if error %}<div class="alert">{{ error }}</div>{% endif %}
+    <form method="post">
+      <label>Usuario<input name="usuario" autocomplete="username" required></label>
+      <label>Contrasena<input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Ingresar</button>
+    </form>
+  </main>
+</body>
+</html>

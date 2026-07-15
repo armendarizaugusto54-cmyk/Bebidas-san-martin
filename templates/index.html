@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bebidas San Martin</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <aside>
+    <h1>Bebidas<br>San Martin</h1>
+    <button data-view="inicio" class="active">Inicio</button>
+    <button data-view="ventas">Ventas</button>
+    <button data-view="productos">Productos</button>
+    <button data-view="clientes">Clientes</button>
+    <button data-view="caja">Caja</button>
+    <button data-view="categorias">Categorias</button>
+    <button data-view="marcas">Marcas</button>
+    <button data-view="proveedores">Proveedores</button>
+    <button data-view="usuarios">Usuarios</button>
+    <a href="{{ url_for('logout') }}">Salir</a>
+  </aside>
+  <main>
+    <header>
+      <div>
+        <strong>Sistema de inventario</strong>
+        <span>{{ user.nombre }} - {{ user.rol }}</span>
+      </div>
+      <input id="search" placeholder="Buscar en la vista actual">
+    </header>
+
+    <section id="inicio" class="view active">
+      <div class="cards">
+        <article><span>Productos</span><strong id="card-productos">0</strong></article>
+        <article><span>Ventas hoy</span><strong id="card-ventas">$0</strong></article>
+        <article><span>Stock bajo</span><strong id="card-stock">0</strong></article>
+        <article><span>Inventario</span><strong id="card-inventario">$0</strong></article>
+      </div>
+      <div class="panel">
+        <h2>Productos con stock bajo</h2>
+        <table id="tabla-bajos"></table>
+      </div>
+    </section>
+
+    <section id="ventas" class="view">
+      <div class="split">
+        <form id="venta-form" class="panel">
+          <h2>Nueva venta</h2>
+          <label>Cliente<select name="cliente_id" required></select></label>
+          <label>Tipo<select name="tipo">
+            <option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option>
+            <option>CREDITO</option><option>POSNET</option><option>CUENTA CORRIENTE</option>
+          </select></label>
+          <label>Producto<select id="venta-producto"></select></label>
+          <label>Cantidad<input id="venta-cantidad" type="number" min="1" step="1" value="1"></label>
+          <button type="button" id="add-item">Agregar producto</button>
+          <button type="submit">Finalizar venta</button>
+        </form>
+        <div class="panel">
+          <h2>Ticket</h2>
+          <table id="ticket"></table>
+          <div class="total" id="ticket-total">TOTAL: $0.00</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Ultimas ventas</h2>
+        <table id="tabla-ventas"></table>
+      </div>
+    </section>
+
+    <section id="productos" class="view">
+      <form id="producto-form" class="panel grid-form"></form>
+      <div class="panel"><table id="tabla-productos"></table></div>
+    </section>
+
+    <section id="clientes" class="view">
+      <form id="cliente-form" class="panel grid-form"></form>
+      <div class="panel"><table id="tabla-clientes"></table></div>
+    </section>
+
+    <section id="caja" class="view">
+      <div class="cards">
+        <article><span>Estado</span><strong id="caja-estado">Cerrada</strong></article>
+        <article><span>Apertura</span><strong id="caja-apertura">$0</strong></article>
+        <article><span>Entradas</span><strong id="caja-entradas">$0</strong></article>
+        <article><span>Total teorico</span><strong id="caja-total">$0</strong></article>
+      </div>
+      <div class="split">
+        <form id="caja-form" class="panel">
+          <h2>Abrir caja</h2>
+          <label>Monto inicial<input name="apertura" type="number" step="0.01" value="0"></label>
+          <button>Abrir</button>
+        </form>
+        <form id="mov-form" class="panel">
+          <h2>Movimiento</h2>
+          <label>Tipo<select name="tipo"><option value="ingreso">Ingreso</option><option value="gasto">Gasto</option></select></label>
+          <label>Descripcion<input name="descripcion"></label>
+          <label>Importe<input name="importe" type="number" step="0.01" required></label>
+          <button>Registrar</button>
+        </form>
+        <form id="cierre-form" class="panel">
+          <h2>Cerrar caja</h2>
+          <label>Efectivo contado<input name="cierre" type="number" step="0.01" required></label>
+          <button>Cerrar</button>
+        </form>
+      </div>
+      <div class="panel"><table id="tabla-caja"></table></div>
+    </section>
+
+    <section id="categorias" class="view simple" data-kind="categorias"></section>
+    <section id="marcas" class="view simple" data-kind="marcas"></section>
+    <section id="proveedores" class="view">
+      <form id="proveedor-form" class="panel grid-form"></form>
+      <div class="panel"><table id="tabla-proveedores"></table></div>
+    </section>
+
+    <section id="usuarios" class="view">
+      <form id="usuario-form" class="panel grid-form"></form>
+      <div class="split">
+        <div class="panel"><table id="tabla-usuarios"></table></div>
+        <form id="permisos-form" class="panel">
+          <h2>Permisos</h2>
+          <input type="hidden" name="usuario_id">
+          <div id="permisos-list"></div>
+          <button>Guardar permisos</button>
+        </form>
+      </div>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

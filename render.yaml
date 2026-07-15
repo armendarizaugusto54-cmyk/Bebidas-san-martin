@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: bebidas-san-martin-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: BEBIDAS_SECRET
+        generateValue: true

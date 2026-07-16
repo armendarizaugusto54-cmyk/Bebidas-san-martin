@@ -1,9 +1,12 @@
 from datetime import datetime
+import hashlib
+import hmac
 import os
+import secrets
 import shutil
 import sqlite3
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, session, url_for
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -11,6 +14,10 @@ DB_PATH = os.path.join(BASE_DIR, "bebidas.db")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("BEBIDAS_SECRET", "cambiar-esta-clave")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
 
 TABLE_MODULES = {
     "productos": "Productos",
@@ -56,7 +63,52 @@ def ensure_schema():
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(clientes)")}
         if "whatsapp" not in cols:
             conn.execute("ALTER TABLE clientes ADD COLUMN whatsapp TEXT")
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                usuario TEXT,
+                accion TEXT,
+                detalle TEXT
+            )
+            """
+        )
         conn.commit()
+
+
+def hash_password(password):
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+    return f"pbkdf2_sha256${salt}${digest}"
+
+
+def verify_password(password, stored):
+    stored = stored or ""
+    if stored.startswith("pbkdf2_sha256$"):
+        try:
+            _, salt, digest = stored.split("$", 2)
+        except ValueError:
+            return False
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+        return hmac.compare_digest(candidate, digest)
+    return hmac.compare_digest(password, stored)
+
+
+def audit(action, detail=""):
+    user = session.get("user") or {}
+    execute(
+        "INSERT INTO auditoria(fecha,usuario,accion,detalle) VALUES(?,?,?,?)",
+        (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            user.get("usuario", "sistema"),
+            action,
+            str(detail or "")[:500],
+        ),
+    )
+
+
+ensure_schema()
 
 
 def money(value):
@@ -138,17 +190,21 @@ def login():
         usuario = request.form.get("usuario", "").strip()
         password = request.form.get("password", "")
         user = one(
-            "SELECT * FROM usuarios WHERE usuario=? AND password=? AND activo=1",
-            (usuario, password),
+            "SELECT * FROM usuarios WHERE usuario=? AND activo=1",
+            (usuario,),
         )
-        if user:
+        if user and verify_password(password, user["password"]):
             session["user"] = {
                 "id": user["id"],
                 "nombre": user["nombre"],
                 "usuario": user["usuario"],
                 "rol": user["rol"],
             }
+            if not str(user["password"] or "").startswith("pbkdf2_sha256$"):
+                execute("UPDATE usuarios SET password=? WHERE id=?", (hash_password(password), user["id"]))
+            audit("login", "Ingreso correcto")
             return redirect(url_for("index"))
+        audit("login_fallido", f"Usuario: {usuario}")
         error = "Usuario o contrasena incorrectos."
     return render_template("login.html", error=error)
 
@@ -174,21 +230,78 @@ def dashboard():
     if not can("Dashboard"):
         return forbidden()
     ventas_hoy = one(
-        "SELECT COALESCE(SUM(total),0) total FROM ventas WHERE date(fecha)=date('now')"
-    )["total"]
+        """
+        SELECT COUNT(*) cantidad, COALESCE(SUM(total),0) total
+        FROM ventas
+        WHERE date(fecha)=date('now','localtime')
+        """
+    )
+    caja_actual = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
+    ultimo_cierre = one(
+        """
+        SELECT id,fecha,cierre,diferencia
+        FROM caja
+        WHERE estado='CERRADA'
+        ORDER BY id DESC
+        LIMIT 1
+        """
+    )
+    medios = rows(
+        """
+        SELECT tipo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
+        FROM ventas
+        WHERE date(fecha)=date('now','localtime')
+        GROUP BY tipo
+        ORDER BY total DESC
+        """
+    )
+    top_productos = rows(
+        """
+        SELECT p.codigo,p.nombre,COALESCE(SUM(d.cantidad),0) cantidad,
+               COALESCE(SUM(d.subtotal),0) total
+        FROM detalle_ventas d
+        JOIN ventas v ON v.id=d.venta_id
+        JOIN productos p ON p.id=d.producto_id
+        WHERE date(v.fecha)=date('now','localtime')
+        GROUP BY p.id,p.codigo,p.nombre
+        ORDER BY cantidad DESC,total DESC
+        LIMIT 6
+        """
+    )
+    ultimas_ventas = rows(
+        """
+        SELECT v.id,v.fecha,COALESCE(c.nombre,'Consumidor final') cliente,
+               v.tipo,v.total,v.usuario
+        FROM ventas v
+        LEFT JOIN clientes c ON c.id=v.cliente_id
+        ORDER BY v.id DESC
+        LIMIT 8
+        """
+    )
     return jsonify(
         {
             "productos": one("SELECT COUNT(*) cantidad FROM productos")["cantidad"],
             "clientes": one("SELECT COUNT(*) cantidad FROM clientes WHERE activo=1")[
                 "cantidad"
             ],
-            "ventasHoy": ventas_hoy,
+            "ventasHoy": ventas_hoy["total"],
+            "ventasCantidad": ventas_hoy["cantidad"],
+            "ticketPromedio": (
+                ventas_hoy["total"] / ventas_hoy["cantidad"]
+                if ventas_hoy["cantidad"]
+                else 0
+            ),
             "stockBajo": one(
                 "SELECT COUNT(*) cantidad FROM productos WHERE stock <= stock_minimo"
             )["cantidad"],
             "inventario": one(
                 "SELECT COALESCE(SUM(stock * precio_compra),0) total FROM productos"
             )["total"],
+            "caja": caja_actual,
+            "ultimoCierre": ultimo_cierre,
+            "medios": medios,
+            "topProductos": top_productos,
+            "ultimasVentas": ultimas_ventas,
             "bajos": rows(
                 """
                 SELECT codigo,nombre,marca,stock,stock_minimo
@@ -323,6 +436,74 @@ def save_producto():
     return jsonify({"ok": True})
 
 
+@app.post("/api/productos/actualizar-precios")
+def actualizar_precios_categoria():
+    if not can("Productos", "modificar"):
+        return forbidden()
+    data = request.json or {}
+    categoria_id = data.get("categoria_id")
+    porcentaje = money(data.get("porcentaje"))
+    redondear = int(data.get("redondear", 1) or 0) == 1
+    aplicar = int(data.get("aplicar", 0) or 0) == 1
+    if not categoria_id:
+        return jsonify({"error": "Seleccione una categoria."}), 400
+    if porcentaje == 0:
+        return jsonify({"error": "Ingrese un porcentaje distinto de cero."}), 400
+    params = []
+    where = "estado='ACTIVO'"
+    if categoria_id == "__all__":
+        categoria_nombre = "Todas las categorias"
+    elif categoria_id == "__none__":
+        categoria_nombre = "Sin categoria"
+        where += " AND categoria_id IS NULL"
+    else:
+        categoria = one("SELECT nombre FROM categorias WHERE id=?", (categoria_id,))
+        if not categoria:
+            return jsonify({"error": "Categoria inexistente."}), 404
+        categoria_nombre = categoria["nombre"]
+        where += " AND categoria_id=?"
+        params.append(categoria_id)
+    productos = rows(
+        f"""
+        SELECT id,codigo,nombre,precio_venta
+        FROM productos
+        WHERE {where}
+        ORDER BY nombre
+        """,
+        params,
+    )
+    cambios = []
+    for producto in productos:
+        anterior = money(producto["precio_venta"])
+        nuevo = anterior + (anterior * porcentaje / 100)
+        if redondear:
+            nuevo = round(nuevo)
+        else:
+            nuevo = round(nuevo, 2)
+        cambios.append({**producto, "precio_anterior": anterior, "precio_nuevo": nuevo})
+    if aplicar:
+        with db() as conn:
+            for item in cambios:
+                conn.execute(
+                    "UPDATE productos SET precio_venta=? WHERE id=?",
+                    (item["precio_nuevo"], item["id"]),
+                )
+            conn.commit()
+        audit(
+            "precios_actualizados",
+            f"Categoria {categoria_nombre} porcentaje {porcentaje}. Productos {len(cambios)}",
+        )
+    return jsonify(
+        {
+            "ok": True,
+            "aplicado": aplicar,
+            "categoria": categoria_nombre,
+            "cantidad": len(cambios),
+            "cambios": cambios[:80],
+        }
+    )
+
+
 @app.post("/api/clientes")
 def save_cliente():
     data = request.json or {}
@@ -360,6 +541,75 @@ def save_cliente():
             params,
         )
     return jsonify({"ok": True})
+
+
+@app.get("/api/clientes/<int:cliente_id>/cuenta")
+def cliente_cuenta(cliente_id):
+    if not can("Clientes"):
+        return forbidden()
+    cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
+    if not cliente:
+        return jsonify({"error": "Cliente inexistente."}), 404
+    movimientos = rows(
+        """
+        SELECT id,fecha,comprobante,concepto,debe,haber,saldo,observaciones
+        FROM cuenta_corriente
+        WHERE cliente_id=?
+        ORDER BY id DESC
+        LIMIT 120
+        """,
+        (cliente_id,),
+    )
+    resumen = one(
+        """
+        SELECT COUNT(*) movimientos,
+               COALESCE(SUM(debe),0) debe,
+               COALESCE(SUM(haber),0) haber
+        FROM cuenta_corriente
+        WHERE cliente_id=?
+        """,
+        (cliente_id,),
+    )
+    return jsonify({"cliente": cliente, "movimientos": movimientos, "resumen": resumen})
+
+
+@app.post("/api/clientes/<int:cliente_id>/cuenta/pago")
+def cliente_cuenta_pago(cliente_id):
+    if not can("Clientes", "modificar"):
+        return forbidden()
+    data = request.json or {}
+    importe = money(data.get("importe"))
+    if importe <= 0:
+        return jsonify({"error": "Ingrese un importe mayor a cero."}), 400
+    cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
+    if not cliente:
+        return jsonify({"error": "Cliente inexistente."}), 404
+    saldo = money(cliente.get("saldo"))
+    nuevo = saldo - importe
+    comprobante = data.get("comprobante", "").strip() or f"PAGO-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    observaciones = data.get("observaciones", "").strip()
+    with db() as conn:
+        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (nuevo, cliente_id))
+        conn.execute(
+            """
+            INSERT INTO cuenta_corriente
+            (cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                cliente_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                comprobante,
+                "PAGO",
+                0,
+                importe,
+                nuevo,
+                observaciones,
+            ),
+        )
+        conn.commit()
+    audit("pago_cuenta_corriente", f"Cliente {cliente['nombre']} pago {importe}. Saldo {nuevo}")
+    return jsonify({"ok": True, "saldo": nuevo})
 
 
 @app.post("/api/simple/<table>")
@@ -515,6 +765,7 @@ def delete_row(table, item_id):
         execute("UPDATE usuarios SET activo=0 WHERE id=?", (item_id,))
     else:
         execute(f"DELETE FROM {table} WHERE id=?", (item_id,))
+    audit("registro_eliminado", f"{table} id {item_id}")
     return jsonify({"ok": True})
 
 
@@ -625,6 +876,7 @@ def save_venta():
         except Exception as exc:
             conn.rollback()
             return jsonify({"error": str(exc)}), 400
+    audit("venta_registrada", f"Venta {venta_id} total {total}")
     return jsonify({"ok": True, "venta_id": venta_id, "total": total})
 
 
@@ -714,7 +966,13 @@ def reportes():
     )
     return jsonify(
         {
-            "resumen": resumen,
+            "periodo": {"desde": desde, "hasta": hasta},
+            "resumen": {
+                **resumen,
+                "ticket_promedio": (
+                    resumen["total"] / resumen["ventas"] if resumen["ventas"] else 0
+                ),
+            },
             "medios": medios,
             "top": top,
             "bajos": bajos,
@@ -763,7 +1021,7 @@ def save_usuario():
                 SET nombre=?, usuario=?, password=?, rol=?, activo=?
                 WHERE id=?
                 """,
-                params + (usuario_id,),
+                (params[0], params[1], hash_password(params[2]), params[3], params[4], usuario_id),
             )
         else:
             execute(
@@ -780,8 +1038,9 @@ def save_usuario():
             INSERT INTO usuarios(nombre,usuario,password,rol,activo)
             VALUES(?,?,?,?,?)
             """,
-            params,
+            (params[0], params[1], hash_password(params[2]), params[3], params[4]),
         )
+    audit("usuario_guardado", f"Usuario: {params[1]}")
     return jsonify({"ok": True})
 
 
@@ -809,7 +1068,46 @@ def save_usuario_permisos(user_id):
                 ),
             )
         conn.commit()
+    audit("permisos_actualizados", f"Usuario id: {user_id}")
     return jsonify({"ok": True})
+
+
+@app.post("/api/seguridad/cambiar-password")
+def cambiar_password():
+    data = request.json or {}
+    actual = data.get("actual", "")
+    nueva = data.get("nueva", "")
+    repetir = data.get("repetir", "")
+    if len(nueva) < 4:
+        return jsonify({"error": "La nueva contrasena debe tener al menos 4 caracteres."}), 400
+    if nueva != repetir:
+        return jsonify({"error": "Las contrasenas nuevas no coinciden."}), 400
+    user = one("SELECT * FROM usuarios WHERE id=?", (session["user"]["id"],))
+    if not user or not verify_password(actual, user["password"]):
+        audit("password_fallido", "Intento de cambio de contrasena")
+        return jsonify({"error": "La contrasena actual no es correcta."}), 400
+    execute("UPDATE usuarios SET password=? WHERE id=?", (hash_password(nueva), user["id"]))
+    audit("password_cambiado", "Cambio de contrasena propio")
+    return jsonify({"ok": True})
+
+
+@app.get("/api/seguridad/auditoria")
+def seguridad_auditoria():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+    q = f"%{request.args.get('q', '').strip()}%"
+    return jsonify(
+        rows(
+            """
+            SELECT id,fecha,usuario,accion,detalle
+            FROM auditoria
+            WHERE usuario LIKE ? OR accion LIKE ? OR detalle LIKE ?
+            ORDER BY id DESC
+            LIMIT 120
+            """,
+            (q, q, q),
+        )
+    )
 
 
 @app.get("/api/caja/actual")
@@ -828,10 +1126,11 @@ def abrir_caja():
     existe = one("SELECT id FROM caja WHERE estado='ABIERTA' LIMIT 1")
     if existe:
         return jsonify({"error": "Ya existe una caja abierta."}), 400
-    execute(
+    caja_id = execute(
         "INSERT INTO caja(fecha,apertura,estado) VALUES(?,?,?)",
         (datetime.now().strftime("%Y-%m-%d"), money(data.get("apertura")), "ABIERTA"),
     )
+    audit("caja_abierta", f"Caja {caja_id} apertura {money(data.get('apertura'))}")
     return jsonify({"ok": True})
 
 
@@ -856,6 +1155,7 @@ def caja_movimiento():
             "UPDATE caja SET ingresos=COALESCE(ingresos,0)+? WHERE id=?",
             (importe, caja["id"]),
         )
+    audit("movimiento_caja", f"Caja {caja['id']} {tipo} {importe}")
     return jsonify({"ok": True})
 
 
@@ -921,6 +1221,7 @@ def cerrar_caja():
             caja["id"],
         ),
     )
+    audit("caja_cerrada", f"Caja {caja['id']} diferencia {diferencia}")
     return jsonify({"ok": True, "sistema": teorico, "contado": cierre, "diferencia": diferencia})
 
 
@@ -937,6 +1238,49 @@ def caja_sistema_por_medio(caja):
     }
 
 
+def caja_arqueo_detalle(caja):
+    arqueo = one(
+        "SELECT * FROM arqueo_caja WHERE caja_id=? ORDER BY id DESC LIMIT 1",
+        (caja["id"],),
+    )
+    sistema = caja_sistema_por_medio(caja)
+    contado = {
+        "efectivo": money(arqueo.get("efectivo_contado")) if arqueo else money(caja.get("cierre")),
+        "transferencia": sistema["transferencia"],
+        "debito": sistema["debito"],
+        "credito": sistema["credito"],
+        "posnet": money(arqueo.get("posnet_contado")) if arqueo else sistema["posnet"],
+    }
+    medios = []
+    for medio, label in [
+        ("efectivo", "Efectivo"),
+        ("transferencia", "Transferencia"),
+        ("debito", "Debito"),
+        ("credito", "Credito"),
+        ("posnet", "Posnet"),
+    ]:
+        medios.append(
+            {
+                "medio": label,
+                "sistema": sistema[medio],
+                "contado": contado[medio],
+                "diferencia": contado[medio] - sistema[medio],
+            }
+        )
+    return {
+        "caja": caja,
+        "arqueo": arqueo or {},
+        "sistema": sistema,
+        "contado": contado,
+        "medios": medios,
+        "totales": {
+            "sistema": sum(sistema.values()),
+            "contado": sum(contado.values()),
+            "diferencia": sum(contado.values()) - sum(sistema.values()),
+        },
+    }
+
+
 @app.get("/api/caja/ultimo-arqueo")
 def ultimo_arqueo():
     if session["user"]["rol"] != "ADMIN":
@@ -948,35 +1292,62 @@ def ultimo_arqueo():
         caja = one("SELECT * FROM caja WHERE estado='CERRADA' ORDER BY id DESC LIMIT 1")
     if not caja:
         return jsonify({})
-    arqueo = one(
-        "SELECT * FROM arqueo_caja WHERE caja_id=? ORDER BY id DESC LIMIT 1",
-        (caja["id"],),
+    return jsonify(caja_arqueo_detalle(caja))
+
+
+@app.get("/api/caja/<int:caja_id>/detalle")
+def caja_detalle(caja_id):
+    if not can("Caja"):
+        return forbidden()
+    caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
+    if not caja:
+        return jsonify({"error": "Caja inexistente."}), 404
+    detalle = caja_arqueo_detalle(caja)
+    detalle["movimientos"] = rows(
+        """
+        SELECT fecha,descripcion,importe
+        FROM gastos
+        WHERE caja_id=?
+        ORDER BY id DESC
+        """,
+        (caja_id,),
     )
-    sistema = caja_sistema_por_medio(caja)
-    contado = {
-        "efectivo": money(arqueo.get("efectivo_contado")) if arqueo else money(caja.get("cierre")),
-        "transferencia": 0,
-        "debito": 0,
-        "credito": 0,
-        "posnet": money(arqueo.get("posnet_contado")) if arqueo else 0,
-    }
-    if arqueo and arqueo.get("observaciones"):
-        # Los medios no contemplados por columnas propias se guardan en observaciones;
-        # para corregir se cargan de nuevo desde cero.
-        contado["transferencia"] = sistema["transferencia"]
-        contado["debito"] = sistema["debito"]
-        contado["credito"] = sistema["credito"]
-    return jsonify({"caja": caja, "arqueo": arqueo or {}, "sistema": sistema, "contado": contado})
+    return jsonify(detalle)
 
 
 @app.get("/api/caja/cierres")
 def caja_cierres():
-    if session["user"]["rol"] != "ADMIN":
+    if not can("Caja"):
         return forbidden()
     q = f"%{request.args.get('q', '').strip()}%"
+    desde = request.args.get("desde", "").strip()
+    hasta = request.args.get("hasta", "").strip()
+    estado = request.args.get("estado", "").strip().upper()
+    filters = [
+        """
+        (
+            c.fecha LIKE ?
+            OR CAST(c.id AS TEXT) LIKE ?
+            OR COALESCE(c.estado,'') LIKE ?
+            OR CAST(c.diferencia AS TEXT) LIKE ?
+            OR COALESCE(a.usuario,'') LIKE ?
+            OR COALESCE(a.usuario_correccion,'') LIKE ?
+        )
+        """
+    ]
+    params = [q, q, q, q, q, q]
+    if desde:
+        filters.append("date(c.fecha) >= date(?)")
+        params.append(desde)
+    if hasta:
+        filters.append("date(c.fecha) <= date(?)")
+        params.append(hasta)
+    if estado in {"ABIERTA", "CERRADA"}:
+        filters.append("c.estado=?")
+        params.append(estado)
     return jsonify(
         rows(
-            """
+            f"""
             SELECT c.id,c.fecha,c.estado,c.apertura,c.efectivo,c.transferencia,
                    c.debito,c.credito,c.posnet,c.ingresos,c.gastos,c.cierre,
                    c.diferencia,a.usuario,a.usuario_correccion,a.fecha_correccion,
@@ -988,18 +1359,11 @@ def caja_cierres():
                 ORDER BY id DESC
                 LIMIT 1
             )
-            WHERE (
-                c.fecha LIKE ?
-                OR CAST(c.id AS TEXT) LIKE ?
-                OR COALESCE(c.estado,'') LIKE ?
-                OR CAST(c.diferencia AS TEXT) LIKE ?
-                OR COALESCE(a.usuario,'') LIKE ?
-                OR COALESCE(a.usuario_correccion,'') LIKE ?
-              )
+            WHERE {" AND ".join(filters)}
             ORDER BY c.id DESC
             LIMIT 80
             """,
-            (q, q, q, q, q, q),
+            params,
         )
     )
 
@@ -1096,6 +1460,7 @@ def corregir_arqueo():
                 motivo,
             ),
         )
+    audit("caja_corregida", f"Caja {caja_id} diferencia {diferencia}. Motivo: {motivo}")
     return jsonify({"ok": True, "sistema": total_sistema, "contado": total_contado, "diferencia": diferencia})
 
 
@@ -1108,7 +1473,80 @@ def backup():
     filename = f"bebidas_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     target = os.path.join(backup_dir, filename)
     shutil.copy2(DB_PATH, target)
+    audit("backup_creado", filename)
     return jsonify({"ok": True, "archivo": os.path.join("backups", filename)})
+
+
+@app.get("/api/backups")
+def listar_backups():
+    if not can("Configuracion"):
+        return forbidden()
+    backup_dir = os.path.join(BASE_DIR, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    items = []
+    for name in os.listdir(backup_dir):
+        if not name.endswith(".db"):
+            continue
+        path = os.path.join(backup_dir, name)
+        stat = os.stat(path)
+        items.append(
+            {
+                "archivo": name,
+                "fecha": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "tamano": stat.st_size,
+            }
+        )
+    return jsonify(sorted(items, key=lambda item: item["fecha"], reverse=True))
+
+
+@app.get("/api/backups/<path:filename>")
+def descargar_backup(filename):
+    if not can("Configuracion"):
+        return forbidden()
+    safe = os.path.basename(filename)
+    if safe != filename or not safe.endswith(".db"):
+        return jsonify({"error": "Archivo invalido."}), 400
+    path = os.path.join(BASE_DIR, "backups", safe)
+    if not os.path.exists(path):
+        return jsonify({"error": "Backup inexistente."}), 404
+    return send_file(path, as_attachment=True, download_name=safe)
+
+
+def validar_backup_sqlite(path):
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='usuarios'"
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+@app.post("/api/backups/restaurar")
+def restaurar_backup():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+    uploaded = request.files.get("backup")
+    if not uploaded or not uploaded.filename.endswith(".db"):
+        return jsonify({"error": "Subi un archivo .db de backup."}), 400
+    backup_dir = os.path.join(BASE_DIR, "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    temp_name = f"restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    temp_path = os.path.join(backup_dir, temp_name)
+    uploaded.save(temp_path)
+    if not validar_backup_sqlite(temp_path):
+        os.remove(temp_path)
+        return jsonify({"error": "El archivo no parece ser una base valida del sistema."}), 400
+    previo = f"antes_de_restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+    shutil.copy2(DB_PATH, os.path.join(backup_dir, previo))
+    shutil.copy2(temp_path, DB_PATH)
+    ensure_schema()
+    audit("backup_restaurado", f"Restaurado {uploaded.filename}. Copia previa: {previo}")
+    return jsonify({"ok": True, "archivo_previo": os.path.join("backups", previo)})
 
 
 if __name__ == "__main__":

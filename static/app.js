@@ -357,6 +357,7 @@ async function loadCompras() {
 async function loadCaja() {
   const actual = await api("/api/caja/actual");
   cajaActual = actual || {};
+  const cajas = await api("/api/caja");
   const entradas = Number(actual.efectivo || 0) + Number(actual.transferencia || 0) + Number(actual.debito || 0) + Number(actual.credito || 0) + Number(actual.posnet || 0) + Number(actual.ingresos || 0);
   const total = Number(actual.apertura || 0) + entradas - Number(actual.gastos || 0);
   $("#caja-estado").textContent = actual.id ? "Abierta" : "Cerrada";
@@ -373,7 +374,7 @@ async function loadCaja() {
     { key: "gastos", label: "Gastos", format: money },
     { key: "cierre", label: "Cierre", format: money },
     { key: "diferencia", label: "Diferencia", format: money },
-  ], await api("/api/caja"));
+  ], cajas, (r) => state.user?.rol === "ADMIN" ? `<button type="button" class="secondary" data-cargar-cierre="${r.id}">Modificar</button>` : "");
   await loadCierresAdmin();
 }
 
@@ -428,12 +429,13 @@ async function loadCierresAdmin() {
   table($("#tabla-cierres-admin"), [
     { key: "id", label: "Nro" },
     { key: "fecha", label: "Fecha" },
+    { key: "estado", label: "Estado" },
     { key: "cierre", label: "Contado", format: money },
     { key: "diferencia", label: "Dif.", format: money },
     { key: "usuario", label: "Cerro" },
     { key: "corregido", label: "Corregido", format: (v) => Number(v || 0) === 1 ? "Si" : "No" },
     { key: "usuario_correccion", label: "Corrigio" },
-  ], cierres, (r) => `<button type="button" data-cargar-cierre="${r.id}">Corregir</button>`);
+  ], cierres, (r) => `<button type="button" data-cargar-cierre="${r.id}">Modificar</button>`);
 }
 
 async function loadCorreccionArqueo(cajaId = "") {
@@ -451,6 +453,8 @@ async function loadCorreccionArqueo(cajaId = "") {
     return;
   }
   form.hidden = false;
+  $("#correccion-titulo").textContent = `Modificar caja Nro ${data.caja.id}`;
+  $("#correccion-ayuda").textContent = `Caja ${data.caja.estado || ""} del ${data.caja.fecha || ""}. Ajusta los importes y guarda el motivo.`;
   form.elements.caja_id.value = data.caja.id;
   form.elements.arqueo_id.value = data.arqueo?.id || "";
   ["efectivo", "transferencia", "debito", "credito", "posnet"].forEach((medio) => {
@@ -821,6 +825,7 @@ $("#corregir-arqueo-form").addEventListener("input", renderCorreccionArqueo);
 $("#corregir-arqueo-form").onsubmit = async (ev) => {
   ev.preventDefault();
   const data = Object.fromEntries(new FormData(ev.target));
+  if (!data.caja_id) return alert("Primero elegi una caja para modificar.");
   if (!data.motivo?.trim()) return alert("Ingrese el motivo de correccion.");
   await api("/api/caja/corregir-arqueo", { method: "POST", body: JSON.stringify(data) });
   ev.target.elements.motivo.value = "";

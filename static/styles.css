@@ -1260,3 +1260,248 @@ input[readonly] {
     flex-direction: column;
   }
 }
+
+
+/* =========================================================
+   COMPRAS Y PROVEEDORES
+   ========================================================= */
+.compras-head,
+.proveedores-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--brand);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.compras-head h2,
+.proveedores-head h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+}
+
+.compra-head-total {
+  min-width: 210px;
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #edf7f1;
+  color: var(--good);
+}
+
+.compra-head-total span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.compra-head-total strong {
+  font-size: 25px;
+}
+
+.compras-grid {
+  display: grid;
+  grid-template-columns: minmax(380px, 440px) 1fr;
+  gap: 16px;
+}
+
+.compra-carga {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.compra-datos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.compra-item-grid {
+  display: grid;
+  grid-template-columns: 120px 160px 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.compra-opciones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.compra-ticket-panel {
+  display: flex;
+  min-height: 430px;
+  flex-direction: column;
+}
+
+.compra-ticket-scroll {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.compra-item-input {
+  min-width: 100px;
+  font-weight: 700;
+}
+
+.compra-ticket-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  background: #edf7f1;
+}
+
+.compra-ticket-footer span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.compra-ticket-footer strong {
+  color: var(--good);
+  font-size: 26px;
+}
+
+.guardar-compra-btn {
+  width: 100%;
+  min-height: 52px;
+  margin-bottom: 16px;
+  font-size: 17px;
+}
+
+.compras-list-head {
+  align-items: center;
+}
+
+.compras-filtros {
+  display: grid;
+  grid-template-columns: 220px 160px 160px 100px;
+  gap: 8px;
+}
+
+.proveedores-layout {
+  display: grid;
+  grid-template-columns: minmax(650px, 1.35fr) minmax(300px, .65fr);
+  gap: 16px;
+}
+
+.proveedor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.proveedor-nombre {
+  grid-column: span 2;
+}
+
+.proveedor-observaciones {
+  grid-column: span 2;
+}
+
+.proveedor-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.proveedor-form-actions button {
+  min-width: 150px;
+  min-height: 44px;
+}
+
+.proveedores-resumen {
+  display: grid;
+  gap: 10px;
+}
+
+.proveedores-resumen article {
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--brand);
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.proveedores-resumen span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.proveedores-resumen strong {
+  font-size: 23px;
+}
+
+.proveedores-buscador {
+  width: min(380px, 100%);
+}
+
+.proveedor-cuenta-cards {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
+.pago-proveedor-form {
+  display: grid;
+  grid-template-columns: 160px 1fr 1fr 180px;
+  gap: 12px;
+  align-items: end;
+}
+
+.pago-proveedor-form h2 {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 1150px) {
+  .compras-grid,
+  .proveedores-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .compras-filtros {
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .compras-head,
+  .proveedores-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .compra-datos,
+  .compra-item-grid,
+  .compra-opciones,
+  .compras-filtros,
+  .proveedor-grid,
+  .pago-proveedor-form,
+  .proveedor-cuenta-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .proveedor-nombre,
+  .proveedor-observaciones {
+    grid-column: auto;
+  }
+
+  .proveedor-form-actions {
+    flex-direction: column;
+  }
+}

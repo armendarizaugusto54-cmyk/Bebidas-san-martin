@@ -3,7 +3,7 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let state = { user: null, permissions: {}, usuarios: [], options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, cajaActual: null, cajaDetalle: null, productosFiltrados: [], clientesFiltrados: [] };
+let state = { user: null, permissions: {}, usuarios: [], proveedores: [], compraItems: [], compraDetalle: null, proveedorCuenta: null, options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, cajaActual: null, cajaDetalle: null, productosFiltrados: [], clientesFiltrados: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -32,6 +32,9 @@ function aplicarPermisosInterfaz() {
     ["#abrir-caja-form", "Caja", "agregar"],
     ["#mov-caja-form", "Caja", "agregar"],
     ["#cerrar-caja-form", "Caja", "editar"],
+    ["#compra-form", "Compras", "agregar"],
+    ["#proveedor-form", "Proveedores", "agregar"],
+    ["#pago-proveedor-form", "Proveedores", "agregar"],
   ];
 
   reglas.forEach(([selector, modulo, accion]) => {
@@ -104,6 +107,7 @@ async function loadOptions() {
   state.options = await api("/api/options");
   state.productos = state.options.productos || [];
   state.categorias = state.options.categorias || [];
+  state.proveedores = state.options.proveedores || [];
 
   const categoriasProducto = [
     `<option value="">Seleccione categoría</option>`,
@@ -147,6 +151,29 @@ async function loadOptions() {
   $("#venta-producto").innerHTML = state.productos
     .map((p) => `<option value="${p.id}">${escapeHtml(p.codigo)} - ${escapeHtml(p.nombre)} - ${money(p.precio_venta)}</option>`)
     .join("");
+
+  const proveedorOptions = [
+    `<option value="">Seleccione proveedor</option>`,
+    ...state.proveedores.map((p) => `<option value="${p.id}">${escapeHtml(p.nombre)} (${money(p.saldo)})</option>`)
+  ].join("");
+
+  const compraForm = $("#compra-form");
+  if (compraForm) compraForm.elements.proveedor_id.innerHTML = proveedorOptions;
+
+  const filtroCompras = $("#filtro-compras-proveedor");
+  if (filtroCompras) {
+    filtroCompras.innerHTML = [
+      `<option value="">Todos los proveedores</option>`,
+      ...state.proveedores.map((p) => `<option value="${p.id}">${escapeHtml(p.nombre)}</option>`)
+    ].join("");
+  }
+
+  const compraProducto = $("#compra-producto");
+  if (compraProducto) {
+    compraProducto.innerHTML = state.productos.map((p) =>
+      `<option value="${p.id}">${escapeHtml(p.codigo)} - ${escapeHtml(p.nombre)} | Stock ${p.stock} | Costo ${money(p.precio_compra)}</option>`
+    ).join("");
+  }
 
   if (state.current === "ventas" && state.productos.length && !currentProduct()) {
     setVentaProduct(state.productos[0]);
@@ -804,7 +831,8 @@ const MODULOS_PERMISOS = [
   "Clientes",
   "Caja",
   "Reportes",
-  "Herramientas",
+  "Compras",
+  "Proveedores",
   "Usuarios",
 ];
 
@@ -897,6 +925,229 @@ function permisosDesdePantalla() {
   return permisos;
 }
 
+
+function compraTotal() {
+  return state.compraItems.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+}
+
+function renderCompraTicket() {
+  $("#tabla-compra-ticket").innerHTML = `
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th>Cantidad</th>
+        <th>Costo</th>
+        <th>Subtotal</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${state.compraItems.map((item, index) => `
+        <tr>
+          <td><strong>${escapeHtml(item.nombre)}</strong></td>
+          <td><input class="compra-item-input" data-compra-cantidad="${index}" type="number" min="0.01" step="0.01" value="${item.cantidad}"></td>
+          <td><input class="compra-item-input" data-compra-costo="${index}" type="number" min="0" step="0.01" value="${item.costo}"></td>
+          <td><strong>${money(item.subtotal)}</strong></td>
+          <td><button type="button" class="danger" data-remove-compra-item="${index}">Quitar</button></td>
+        </tr>
+      `).join("") || `<tr><td colspan="5">Sin productos cargados.</td></tr>`}
+    </tbody>
+  `;
+
+  const total = compraTotal();
+  $("#compra-total").textContent = money(total);
+  $("#compra-total-top").textContent = money(total);
+  $("#compra-items-resumen").textContent =
+    `${state.compraItems.length} producto${state.compraItems.length === 1 ? "" : "s"}`;
+}
+
+function resetCompra() {
+  state.compraItems = [];
+  $("#compra-form").reset();
+  renderCompraTicket();
+  const producto = state.productos[0];
+  if (producto) {
+    $("#compra-producto").value = producto.id;
+    $("#compra-costo").value = Number(producto.precio_compra || 0).toFixed(2);
+  }
+}
+
+async function loadCompras() {
+  await loadOptions();
+
+  const params = new URLSearchParams();
+  const proveedor = $("#filtro-compras-proveedor")?.value;
+  const desde = $("#filtro-compras-desde")?.value;
+  const hasta = $("#filtro-compras-hasta")?.value;
+
+  if (proveedor) params.set("proveedor_id", proveedor);
+  if (desde) params.set("desde", desde);
+  if (hasta) params.set("hasta", hasta);
+
+  const data = await api(`/api/compras${params.toString() ? "?" + params.toString() : ""}`);
+
+  table($("#tabla-compras"), [
+    { key: "id", label: "N.º" },
+    { key: "fecha", label: "Fecha" },
+    { key: "proveedor", label: "Proveedor" },
+    { key: "comprobante", label: "Comprobante" },
+    { key: "tipo_pago", label: "Pago" },
+    { key: "total", label: "Total", format: money },
+    { key: "estado", label: "Estado" },
+    { key: "usuario", label: "Usuario" },
+  ], data, (r) => `
+    <button type="button" data-ver-compra="${r.id}">Ver</button>
+    ${r.estado === "ACTIVA" && permitido("Compras", "eliminar")
+      ? `<button type="button" class="danger" data-anular-compra="${r.id}">Anular</button>`
+      : ""}
+  `);
+
+  if (!state.compraItems.length) {
+    const producto = state.productos[0];
+    if (producto) {
+      $("#compra-producto").value = producto.id;
+      $("#compra-costo").value = Number(producto.precio_compra || 0).toFixed(2);
+    }
+  }
+  renderCompraTicket();
+}
+
+async function verCompra(compraId) {
+  const data = await api(`/api/compras/${compraId}`);
+  state.compraDetalle = data;
+
+  $("#compra-detalle-panel").hidden = false;
+  $("#compra-detalle-title").textContent = `Compra N.º ${data.compra.id}`;
+  $("#compra-detalle-sub").textContent =
+    `${data.compra.fecha} · ${data.compra.proveedor} · ${data.compra.tipo_pago} · ${data.compra.estado}`;
+
+  table($("#tabla-compra-detalle"), [
+    { key: "codigo", label: "Código" },
+    { key: "producto", label: "Producto" },
+    { key: "cantidad", label: "Cantidad" },
+    { key: "costo", label: "Costo", format: money },
+    { key: "subtotal", label: "Subtotal", format: money },
+  ], data.items || []);
+
+  $("#compra-detalle-total").textContent = `TOTAL: ${money(data.compra.total)}`;
+  $("#compra-detalle-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function imprimirCompra() {
+  const data = state.compraDetalle;
+  if (!data) return;
+
+  const filas = (data.items || []).map((i) => `
+    <tr>
+      <td>${escapeHtml(i.codigo)}</td>
+      <td>${escapeHtml(i.producto)}</td>
+      <td>${escapeHtml(i.cantidad)}</td>
+      <td>${money(i.costo)}</td>
+      <td>${money(i.subtotal)}</td>
+    </tr>
+  `).join("");
+
+  printWindow(
+    `Compra N.º ${data.compra.id}`,
+    `
+      <p>
+        Proveedor: ${escapeHtml(data.compra.proveedor)}<br>
+        CUIT: ${escapeHtml(data.compra.proveedor_cuit || "-")}<br>
+        Fecha: ${escapeHtml(data.compra.fecha)}<br>
+        Comprobante: ${escapeHtml(data.compra.comprobante || "-")}<br>
+        Forma de pago: ${escapeHtml(data.compra.tipo_pago)}
+      </p>
+      <table>
+        <thead><tr><th>Código</th><th>Producto</th><th>Cant.</th><th>Costo</th><th>Subtotal</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+      <div class="total">TOTAL ${money(data.compra.total)}</div>
+    `
+  );
+}
+
+function resetProveedorForm() {
+  const form = $("#proveedor-form");
+  form.reset();
+  form.elements.id.value = "";
+  $("#proveedor-form-title").textContent = "Nuevo proveedor";
+}
+
+function editarProveedor(proveedor) {
+  const form = $("#proveedor-form");
+  Object.entries(proveedor).forEach(([key, value]) => {
+    if (form.elements[key]) form.elements[key].value = value ?? "";
+  });
+  $("#proveedor-form-title").textContent = `Editar proveedor: ${proveedor.nombre}`;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.elements.nombre.focus();
+}
+
+function renderProveedores() {
+  const q = ($("#buscar-proveedores")?.value || "").trim().toLowerCase();
+  const data = state.proveedores.filter((p) =>
+    [p.nombre, p.cuit, p.telefono, p.localidad].join(" ").toLowerCase().includes(q)
+  );
+
+  $("#proveedores-contador").textContent =
+    `${data.length} proveedor${data.length === 1 ? "" : "es"}`;
+
+  table($("#tabla-proveedores"), [
+    { key: "nombre", label: "Proveedor" },
+    { key: "cuit", label: "CUIT" },
+    { key: "telefono", label: "Teléfono" },
+    { key: "localidad", label: "Localidad" },
+    { key: "compras", label: "Compras" },
+    { key: "total_comprado", label: "Total comprado", format: money },
+    { key: "saldo", label: "Saldo", format: money },
+  ], data, (r) => `
+    <button type="button" data-cuenta-proveedor="${r.id}">Cuenta</button>
+    ${permitido("Proveedores", "editar") ? `<button type="button" data-edit-proveedor="${r.id}">Editar</button>` : ""}
+    ${permitido("Proveedores", "eliminar") ? `<button type="button" class="danger" data-del-proveedor="${r.id}">Baja</button>` : ""}
+  `);
+
+  $("#proveedores-total").textContent = state.proveedores.length;
+  $("#proveedores-saldo-total").textContent = money(
+    state.proveedores.reduce((s, p) => s + Number(p.saldo || 0), 0)
+  );
+  $("#proveedores-compras-total").textContent = money(
+    state.proveedores.reduce((s, p) => s + Number(p.total_comprado || 0), 0)
+  );
+}
+
+async function loadProveedores() {
+  state.proveedores = await api("/api/proveedores");
+  renderProveedores();
+}
+
+async function loadCuentaProveedor(proveedorId) {
+  const data = await api(`/api/proveedores/${proveedorId}/cuenta`);
+  state.proveedorCuenta = data;
+
+  $("#proveedor-cuenta-panel").hidden = false;
+  $("#proveedor-cuenta-title").textContent = `Cuenta corriente - ${data.proveedor.nombre}`;
+  $("#proveedor-cuenta-sub").textContent =
+    [data.proveedor.cuit, data.proveedor.telefono, data.proveedor.localidad].filter(Boolean).join(" · ");
+
+  $("#proveedor-saldo").textContent = money(data.proveedor.saldo);
+  $("#proveedor-debe").textContent = money(data.resumen.debe);
+  $("#proveedor-haber").textContent = money(data.resumen.haber);
+  $("#proveedor-movs").textContent = data.resumen.movimientos || 0;
+  $("#pago-proveedor-form").elements.proveedor_id.value = data.proveedor.id;
+
+  table($("#tabla-proveedor-cuenta"), [
+    { key: "fecha", label: "Fecha" },
+    { key: "comprobante", label: "Comprobante" },
+    { key: "concepto", label: "Concepto" },
+    { key: "debe", label: "Debe", format: money },
+    { key: "haber", label: "Haber", format: money },
+    { key: "saldo", label: "Saldo", format: money },
+    { key: "observaciones", label: "Observaciones" },
+  ], data.movimientos || []);
+
+  $("#proveedor-cuenta-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 async function refresh() {
   if (state.current === "inicio") return loadDashboard();
   if (state.current === "productos") return loadProductos();
@@ -904,7 +1155,8 @@ async function refresh() {
   if (state.current === "ventas") return loadVentas();
   if (state.current === "caja") return loadCaja();
   if (state.current === "reportes") return loadReportes();
-  if (state.current === "herramientas") return loadHerramientas();
+  if (state.current === "compras") return loadCompras();
+  if (state.current === "proveedores") return loadProveedores();
   if (state.current === "usuarios") return loadUsuarios();
 }
 
@@ -952,6 +1204,42 @@ document.addEventListener("click", async (ev) => {
       try {
         await api(`/api/clientes/${cliente.id}`, { method: "DELETE" });
         await loadClientes();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  }
+  if (ev.target.dataset.removeCompraItem !== undefined) {
+    state.compraItems.splice(Number(ev.target.dataset.removeCompraItem), 1);
+    renderCompraTicket();
+  }
+  if (ev.target.dataset.verCompra) await verCompra(ev.target.dataset.verCompra);
+  if (ev.target.dataset.anularCompra) {
+    const motivo = prompt("Motivo de la anulación:");
+    if (motivo?.trim()) {
+      try {
+        await api(`/api/compras/${ev.target.dataset.anularCompra}/anular`, {
+          method: "POST",
+          body: JSON.stringify({ motivo }),
+        });
+        await loadCompras();
+        await loadOptions();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  }
+  if (ev.target.dataset.editProveedor) {
+    editarProveedor(state.proveedores.find((p) => String(p.id) === String(ev.target.dataset.editProveedor)));
+  }
+  if (ev.target.dataset.cuentaProveedor) await loadCuentaProveedor(ev.target.dataset.cuentaProveedor);
+  if (ev.target.dataset.delProveedor) {
+    const proveedor = state.proveedores.find((p) => String(p.id) === String(ev.target.dataset.delProveedor));
+    if (proveedor && confirm(`¿Dar de baja al proveedor "${proveedor.nombre}"?`)) {
+      try {
+        await api(`/api/proveedores/${proveedor.id}`, { method: "DELETE" });
+        await loadProveedores();
+        await loadOptions();
       } catch (error) {
         alert(error.message);
       }
@@ -1602,32 +1890,10 @@ $("#cerrar-detalle-caja").onclick = () => {
 
 $("#imprimir-cierre").onclick = imprimirCierreCaja;
 
-$("#reportes-form").onsubmit = loadReportes;
-$("#print-report").onclick = () => {
+if ($("#reportes-form")) $("#reportes-form").onsubmit = loadReportes;
+if ($("#print-report")) $("#print-report").onclick = () => {
   if (!state.lastReport) return alert("Actualice el reporte.");
   printWindow("Reporte comercial", `<div class="total">Total vendido ${money(state.lastReport.resumen.total)}</div><h2>Medios</h2>${$("#tabla-medios").outerHTML}<h2>Top productos</h2>${$("#tabla-top").outerHTML}`);
-};
-
-async function previewPrecios(aplicar) {
-  const data = Object.fromEntries(new FormData($("#precios-form")));
-  data.redondear = $("#precios-form").elements.redondear.checked ? 1 : 0;
-  data.ganancia = data.porcentaje;
-  data.aplicar = aplicar ? 1 : 0;
-  if (aplicar && !confirm("Aplicar cambios de precios?")) return;
-  const result = await api("/api/precios/categoria", { method: "POST", body: JSON.stringify(data) });
-  $("#precios-status").textContent = `${result.aplicado ? "Aplicado" : "Vista previa"}: ${result.cantidad} productos en ${result.categoria}.`;
-  table($("#tabla-precios"), [{ key: "codigo", label: "Codigo" }, { key: "nombre", label: "Producto" }, { key: "anterior", label: "Antes", format: money }, { key: "nuevo", label: "Nuevo", format: money }], result.cambios);
-  if (aplicar) await loadOptions();
-}
-$("#preview-precios").onclick = () => previewPrecios(false);
-$("#precios-form").onsubmit = async (ev) => {
-  ev.preventDefault();
-  await previewPrecios(true);
-};
-
-$("#crear-backup").onclick = async () => {
-  await api("/api/backup", { method: "POST", body: "{}" });
-  await loadHerramientas();
 };
 
 $("#usuario-form").onsubmit = async (ev) => {
@@ -1701,6 +1967,149 @@ $("#guardar-permisos").onclick = async () => {
   } catch (error) {
     alert(error.message);
   }
+};
+
+
+$("#compra-producto").addEventListener("change", () => {
+  const producto = state.productos.find((p) => String(p.id) === String($("#compra-producto").value));
+  if (producto) $("#compra-costo").value = Number(producto.precio_compra || 0).toFixed(2);
+});
+
+$("#agregar-compra-item").onclick = () => {
+  const producto = state.productos.find((p) => String(p.id) === String($("#compra-producto").value));
+  const cantidad = Number($("#compra-cantidad").value || 0);
+  const costo = Number($("#compra-costo").value || 0);
+
+  if (!producto) return alert("Seleccione un producto.");
+  if (!Number.isFinite(cantidad) || cantidad <= 0) return alert("Cantidad inválida.");
+  if (!Number.isFinite(costo) || costo < 0) return alert("Costo inválido.");
+
+  const existente = state.compraItems.find((i) => String(i.producto_id) === String(producto.id));
+  if (existente) {
+    existente.cantidad += cantidad;
+    existente.costo = costo;
+    existente.subtotal = existente.cantidad * costo;
+  } else {
+    state.compraItems.push({
+      producto_id: producto.id,
+      nombre: producto.nombre,
+      cantidad,
+      costo,
+      subtotal: cantidad * costo,
+    });
+  }
+
+  $("#compra-cantidad").value = "1";
+  renderCompraTicket();
+};
+
+$("#tabla-compra-ticket").addEventListener("input", (ev) => {
+  const indexCantidad = ev.target.dataset.compraCantidad;
+  const indexCosto = ev.target.dataset.compraCosto;
+
+  if (indexCantidad !== undefined) {
+    const item = state.compraItems[Number(indexCantidad)];
+    item.cantidad = Number(ev.target.value || 0);
+    item.subtotal = item.cantidad * item.costo;
+    renderCompraTicket();
+  }
+
+  if (indexCosto !== undefined) {
+    const item = state.compraItems[Number(indexCosto)];
+    item.costo = Number(ev.target.value || 0);
+    item.subtotal = item.cantidad * item.costo;
+    renderCompraTicket();
+  }
+});
+
+$("#vaciar-compra").onclick = () => {
+  if (!state.compraItems.length) return;
+  if (confirm("¿Vaciar todos los productos de la compra?")) {
+    state.compraItems = [];
+    renderCompraTicket();
+  }
+};
+
+$("#compra-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  const form = ev.target;
+  const data = Object.fromEntries(new FormData(form));
+  data.actualizar_costos = form.elements.actualizar_costos.checked;
+  data.recalcular_venta = form.elements.recalcular_venta.checked;
+  data.items = state.compraItems;
+
+  try {
+    const result = await api("/api/compras", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    alert(`Compra N.º ${result.compra_id} registrada por ${money(result.total)}.`);
+    resetCompra();
+    await loadOptions();
+    await loadCompras();
+    await verCompra(result.compra_id);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#filtrar-compras").onclick = loadCompras;
+$("#cerrar-compra-detalle").onclick = () => {
+  $("#compra-detalle-panel").hidden = true;
+  state.compraDetalle = null;
+};
+$("#imprimir-compra").onclick = imprimirCompra;
+
+$("#proveedor-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  try {
+    const resultado = await api("/api/proveedores", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
+    });
+
+    alert("Proveedor guardado correctamente.");
+    resetProveedorForm();
+    await loadProveedores();
+    await loadOptions();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#nuevo-proveedor").onclick = () => {
+  resetProveedorForm();
+  $("#proveedor-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#proveedor-form").elements.nombre.focus();
+};
+
+$("#cancelar-proveedor").onclick = resetProveedorForm;
+$("#buscar-proveedores").addEventListener("input", renderProveedores);
+
+$("#pago-proveedor-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const data = Object.fromEntries(new FormData(ev.target));
+
+  try {
+    await api(`/api/proveedores/${data.proveedor_id}/pago`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    ev.target.reset();
+    ev.target.elements.proveedor_id.value = data.proveedor_id;
+    await loadProveedores();
+    await loadCuentaProveedor(data.proveedor_id);
+    await loadOptions();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#cerrar-proveedor-cuenta").onclick = () => {
+  $("#proveedor-cuenta-panel").hidden = true;
+  state.proveedorCuenta = null;
 };
 
 (async function init() {

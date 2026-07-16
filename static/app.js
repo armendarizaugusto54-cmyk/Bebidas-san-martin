@@ -374,7 +374,7 @@ async function loadCaja() {
     { key: "cierre", label: "Cierre", format: money },
     { key: "diferencia", label: "Diferencia", format: money },
   ], await api("/api/caja"));
-  await loadCorreccionArqueo();
+  await loadCierresAdmin();
 }
 
 function arqueoSistema() {
@@ -413,14 +413,38 @@ function renderArqueo() {
   $("#arqueo-diferencia").classList.toggle("diff-bad", Math.abs(totalDif) >= 0.01);
 }
 
-async function loadCorreccionArqueo() {
+async function loadCierresAdmin() {
+  const panel = $("#buscar-cierres-admin");
+  const form = $("#corregir-arqueo-form");
+  if (!panel || !form) return;
+  if (state.user?.rol !== "ADMIN") {
+    panel.hidden = true;
+    form.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  const q = encodeURIComponent($("#buscar-cierre-texto")?.value || "");
+  const cierres = await api(`/api/caja/cierres?q=${q}`);
+  table($("#tabla-cierres-admin"), [
+    { key: "id", label: "Nro" },
+    { key: "fecha", label: "Fecha" },
+    { key: "cierre", label: "Contado", format: money },
+    { key: "diferencia", label: "Dif.", format: money },
+    { key: "usuario", label: "Cerro" },
+    { key: "corregido", label: "Corregido", format: (v) => Number(v || 0) === 1 ? "Si" : "No" },
+    { key: "usuario_correccion", label: "Corrigio" },
+  ], cierres, (r) => `<button type="button" data-cargar-cierre="${r.id}">Corregir</button>`);
+}
+
+async function loadCorreccionArqueo(cajaId = "") {
   const form = $("#corregir-arqueo-form");
   if (!form) return;
   if (state.user?.rol !== "ADMIN") {
     form.hidden = true;
     return;
   }
-  const data = await api("/api/caja/ultimo-arqueo");
+  const suffix = cajaId ? `?caja_id=${encodeURIComponent(cajaId)}` : "";
+  const data = await api(`/api/caja/ultimo-arqueo${suffix}`);
   correccionCaja = data;
   if (!data.caja?.id) {
     form.hidden = true;
@@ -433,6 +457,7 @@ async function loadCorreccionArqueo() {
     form.elements[`${medio}_contado`].value = Number(data.contado?.[medio] || 0).toFixed(2);
   });
   renderCorreccionArqueo();
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderCorreccionArqueo() {
@@ -677,6 +702,10 @@ document.addEventListener("click", async (ev) => {
     setVentaProduct(product);
     closeProductSearch();
   }
+  const cargarCierre = ev.target.dataset.cargarCierre;
+  if (cargarCierre) {
+    await loadCorreccionArqueo(cargarCierre);
+  }
 });
 
 $("#search").addEventListener("input", refresh);
@@ -786,6 +815,8 @@ $("#cierre-form").onsubmit = async (ev) => {
   await loadCaja();
 };
 $("#cierre-form").addEventListener("input", renderArqueo);
+$("#buscar-cierre-texto").addEventListener("input", loadCierresAdmin);
+$("#actualizar-cierres").addEventListener("click", loadCierresAdmin);
 $("#corregir-arqueo-form").addEventListener("input", renderCorreccionArqueo);
 $("#corregir-arqueo-form").onsubmit = async (ev) => {
   ev.preventDefault();

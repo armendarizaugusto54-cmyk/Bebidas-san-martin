@@ -337,6 +337,19 @@ label {
   background: #fffafa;
 }
 
+.admin-search-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 900px) {
+  .admin-search-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 .split > .panel form,
 .panel form { display: grid; gap: 12px; }
 
@@ -350,20 +363,41 @@ label {
 .login-body {
   display: grid;
   place-items: center;
-  background: #edf3fa;
+  background:
+    radial-gradient(circle at 25% 18%, rgba(20, 99, 216, .18), transparent 28%),
+    radial-gradient(circle at 76% 82%, rgba(22, 131, 77, .16), transparent 30%),
+    #edf3fa;
 }
 
 .login-panel {
-  width: min(410px, calc(100vw - 32px));
-  padding: 30px;
+  width: min(460px, calc(100vw - 32px));
+  padding: 32px;
   background: white;
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: 0 18px 60px rgba(23, 32, 51, .12);
 }
 
-.login-panel h1 { margin: 0 0 6px; }
-.login-panel p { margin: 0 0 22px; color: var(--muted); }
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.login-brand img {
+  width: 92px;
+  height: 92px;
+  flex: 0 0 auto;
+}
+
+.login-panel h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.login-panel p { margin: 0; color: var(--muted); }
 .login-panel form { display: grid; gap: 14px; }
 .login-panel button { width: 100%; margin-top: 8px; }
 

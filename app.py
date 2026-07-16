@@ -941,7 +941,11 @@ def caja_sistema_por_medio(caja):
 def ultimo_arqueo():
     if session["user"]["rol"] != "ADMIN":
         return forbidden()
-    caja = one("SELECT * FROM caja WHERE estado='CERRADA' ORDER BY id DESC LIMIT 1")
+    caja_id = request.args.get("caja_id")
+    if caja_id:
+        caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
+    else:
+        caja = one("SELECT * FROM caja WHERE estado='CERRADA' ORDER BY id DESC LIMIT 1")
     if not caja:
         return jsonify({})
     arqueo = one(
@@ -965,6 +969,41 @@ def ultimo_arqueo():
     return jsonify({"caja": caja, "arqueo": arqueo or {}, "sistema": sistema, "contado": contado})
 
 
+@app.get("/api/caja/cierres")
+def caja_cierres():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+    q = f"%{request.args.get('q', '').strip()}%"
+    return jsonify(
+        rows(
+            """
+            SELECT c.id,c.fecha,c.estado,c.apertura,c.efectivo,c.transferencia,
+                   c.debito,c.credito,c.posnet,c.ingresos,c.gastos,c.cierre,
+                   c.diferencia,a.usuario,a.usuario_correccion,a.fecha_correccion,
+                   a.motivo_correccion,a.corregido
+            FROM caja c
+            LEFT JOIN arqueo_caja a ON a.id=(
+                SELECT id FROM arqueo_caja
+                WHERE caja_id=c.id
+                ORDER BY id DESC
+                LIMIT 1
+            )
+            WHERE (
+                c.fecha LIKE ?
+                OR CAST(c.id AS TEXT) LIKE ?
+                OR COALESCE(c.estado,'') LIKE ?
+                OR CAST(c.diferencia AS TEXT) LIKE ?
+                OR COALESCE(a.usuario,'') LIKE ?
+                OR COALESCE(a.usuario_correccion,'') LIKE ?
+              )
+            ORDER BY c.id DESC
+            LIMIT 80
+            """,
+            (q, q, q, q, q, q),
+        )
+    )
+
+
 @app.post("/api/caja/corregir-arqueo")
 def corregir_arqueo():
     if session["user"]["rol"] != "ADMIN":
@@ -975,9 +1014,9 @@ def corregir_arqueo():
     motivo = data.get("motivo", "").strip()
     if not caja_id or not motivo:
         return jsonify({"error": "Caja y motivo son obligatorios."}), 400
-    caja = one("SELECT * FROM caja WHERE id=? AND estado='CERRADA'", (caja_id,))
+    caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
     if not caja:
-        return jsonify({"error": "Caja cerrada inexistente."}), 404
+        return jsonify({"error": "Caja inexistente."}), 404
     sistema = caja_sistema_por_medio(caja)
     contado = {
         "efectivo": money(data.get("efectivo_contado")),

@@ -1,9 +1,13 @@
 const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const shortDate = (value) => value ? new Date(value).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" }) : "-";
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 let state = { options: {}, productos: [], ticket: [], current: "inicio", permisos: {}, user: null, selectedProductId: null, lastSale: null, lastReport: null };
 let cajaActual = {};
 let correccionCaja = null;
+let cajaDetalleActual = null;
+let cuentaActual = null;
 const viewModules = {
   inicio: "Dashboard",
   ventas: "Ventas",
@@ -152,6 +156,68 @@ function ticketQuantityFor(productId) {
     .reduce((a, i) => a + Number(i.cantidad), 0);
 }
 
+function ventaDesdeCarrito() {
+  const form = $("#venta-form");
+  const cliente = form.elements.cliente_id.options[form.elements.cliente_id.selectedIndex]?.text || "Consumidor final";
+  return {
+    venta: {
+      id: "PENDIENTE",
+      fecha: new Date().toLocaleString("es-AR"),
+      cliente,
+      tipo: form.elements.tipo.value,
+      total: ticketTotal(),
+    },
+    detalle: state.ticket.map((item) => ({
+      cantidad: item.cantidad,
+      producto: item.nombre,
+      precio: item.precio,
+      subtotal: item.subtotal,
+    })),
+  };
+}
+
+function printDocumento(tipo, data) {
+  const sale = data.venta;
+  const detalle = data.detalle || [];
+  const esRemito = tipo === "remito";
+  const titulo = tipo === "presupuesto" ? "Presupuesto" : tipo === "remito" ? "Remito" : "Ticket";
+  const numero = sale.id && sale.id !== "PENDIENTE" ? sale.id : "sin registrar";
+  const rows = detalle.map((item) => `
+    <tr>
+      <td>${escapeHtml(item.cantidad)}</td>
+      <td>${escapeHtml(item.producto)}</td>
+      ${esRemito ? "" : `<td>${money(item.precio)}</td><td>${money(item.subtotal)}</td>`}
+    </tr>`).join("");
+  const win = window.open("", titulo.toLowerCase(), "width=760,height=760");
+  win.document.write(`
+    <title>${titulo} ${escapeHtml(numero)}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#172033}
+      .head{display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid #172033;padding-bottom:14px;margin-bottom:18px}
+      h1{font-size:26px;margin:0}.brand{font-weight:bold;font-size:20px}.meta{text-align:right;line-height:1.5}
+      .box{border:1px solid #d9e1ea;border-radius:6px;padding:12px;margin:14px 0}
+      table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px}
+      td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}
+      th{background:#eef3f8}.total{text-align:right;font-size:22px;font-weight:bold;margin-top:18px}
+      .sign{display:flex;justify-content:space-between;gap:40px;margin-top:52px}.sign div{flex:1;border-top:1px solid #333;text-align:center;padding-top:8px}
+      @media print{button{display:none}}
+    </style>
+    <div class="head">
+      <div><div class="brand">Bebidas San Martin</div><h1>${titulo}</h1></div>
+      <div class="meta">Nro: ${escapeHtml(numero)}<br>Fecha: ${escapeHtml(sale.fecha)}<br>Medio: ${escapeHtml(sale.tipo || "-")}</div>
+    </div>
+    <div class="box"><strong>Cliente:</strong> ${escapeHtml(sale.cliente || "Consumidor final")}</div>
+    <table>
+      <thead><tr><th>Cant.</th><th>Producto</th>${esRemito ? "" : "<th>Precio</th><th>Subtotal</th>"}</tr></thead>
+      <tbody>${rows || `<tr><td colspan="${esRemito ? 2 : 4}">Sin productos</td></tr>`}</tbody>
+    </table>
+    ${esRemito ? `<div class="sign"><div>Entrega</div><div>Recibe</div></div>` : `<div class="total">TOTAL ${money(sale.total)}</div>`}
+  `);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
 function downloadText(filename, text) {
   const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -178,10 +244,43 @@ async function loadOptions() {
 
 async function loadDashboard() {
   const d = await api("/api/dashboard");
-  $("#card-productos").textContent = d.productos;
+  $("#card-productos").textContent = `${d.productos || 0} productos`;
   $("#card-ventas").textContent = money(d.ventasHoy);
+  $("#card-ventas-cantidad").textContent = `${d.ventasCantidad || 0} operaciones`;
+  $("#card-ticket").textContent = money(d.ticketPromedio);
   $("#card-stock").textContent = d.stockBajo;
-  $("#card-inventario").textContent = money(d.inventario);
+  $("#card-caja").textContent = d.caja?.id ? "Abierta" : "Cerrada";
+  $("#card-caja-detalle").textContent = d.caja?.id
+    ? `${money(Number(d.caja.apertura || 0) + Number(d.caja.efectivo || 0) + Number(d.caja.transferencia || 0) + Number(d.caja.debito || 0) + Number(d.caja.credito || 0) + Number(d.caja.posnet || 0) + Number(d.caja.ingresos || 0) - Number(d.caja.gastos || 0))} esperado`
+    : "Sin caja abierta";
+  $("#dashboard-medios").innerHTML = (d.medios || []).map((m) => `
+    <div class="payment-item">
+      <span>${m.tipo || "-"}</span>
+      <strong>${money(m.total)}</strong>
+      <small>${m.cantidad || 0} ventas</small>
+    </div>
+  `).join("") || `<div class="empty-state">Todavia no hay ventas hoy.</div>`;
+  $("#dashboard-cierre").innerHTML = d.ultimoCierre
+    ? `
+      <strong>Caja Nro ${d.ultimoCierre.id}</strong>
+      <span>${d.ultimoCierre.fecha || "-"}</span>
+      <div><small>Contado</small><b>${money(d.ultimoCierre.cierre)}</b></div>
+      <div><small>Diferencia</small><b class="${Math.abs(Number(d.ultimoCierre.diferencia || 0)) < 0.01 ? "diff-ok" : "diff-bad"}">${money(d.ultimoCierre.diferencia)}</b></div>
+    `
+    : `<div class="empty-state">Todavia no hay cierres de caja.</div>`;
+  table($("#tabla-ultimas-ventas"), [
+    { key: "fecha", label: "Fecha", format: shortDate },
+    { key: "cliente", label: "Cliente" },
+    { key: "tipo", label: "Medio" },
+    { key: "total", label: "Total", format: money },
+    { key: "usuario", label: "Usuario" },
+  ], d.ultimasVentas || []);
+  table($("#tabla-top-dashboard"), [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "cantidad", label: "Cant." },
+    { key: "total", label: "Total", format: money },
+  ], d.topProductos || []);
   table($("#tabla-bajos"), [
     { key: "codigo", label: "Codigo" },
     { key: "nombre", label: "Producto" },
@@ -217,9 +316,77 @@ async function loadClientes() {
     { key: "cuit", label: "CUIT/DNI" },
     { key: "saldo", label: "Saldo", format: money },
   ], data, (r) => [
+    `<button data-ver-cuenta="${r.id}">Cuenta</button>`,
     can("Clientes", "modificar") ? `<button data-edit-cliente="${r.id}">Editar</button>` : "",
     can("Clientes", "eliminar") ? `<button class="danger" data-del="clientes:${r.id}">Borrar</button>` : "",
   ].join(""));
+}
+
+async function loadCuentaCliente(clienteId, scroll = true) {
+  const data = await api(`/api/clientes/${clienteId}/cuenta`);
+  cuentaActual = data;
+  $("#cuenta-panel").hidden = false;
+  $("#cuenta-titulo").textContent = `Cuenta corriente - ${data.cliente.nombre}`;
+  $("#cuenta-subtitulo").textContent = `${data.cliente.telefono || ""} ${data.cliente.cuit ? "- CUIT/DNI " + data.cliente.cuit : ""}`.trim();
+  $("#cuenta-saldo").textContent = money(data.cliente.saldo);
+  $("#cuenta-saldo").classList.toggle("diff-bad", Number(data.cliente.saldo || 0) > 0);
+  $("#cuenta-saldo").classList.toggle("diff-ok", Number(data.cliente.saldo || 0) <= 0);
+  $("#cuenta-debe").textContent = money(data.resumen.debe);
+  $("#cuenta-haber").textContent = money(data.resumen.haber);
+  $("#cuenta-movs").textContent = data.resumen.movimientos || 0;
+  $("#cuenta-pago-form").elements.cliente_id.value = data.cliente.id;
+  table($("#tabla-cuenta"), [
+    { key: "fecha", label: "Fecha" },
+    { key: "comprobante", label: "Comprobante" },
+    { key: "concepto", label: "Concepto" },
+    { key: "debe", label: "Debe", format: money },
+    { key: "haber", label: "Haber", format: money },
+    { key: "saldo", label: "Saldo", format: money },
+    { key: "observaciones", label: "Obs." },
+  ], data.movimientos || []);
+  if (scroll) $("#cuenta-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  return data;
+}
+
+function printCuentaCliente(data = cuentaActual) {
+  if (!data?.cliente) return alert("Primero elegi un cliente.");
+  const rows = (data.movimientos || []).map((m) => `
+    <tr>
+      <td>${escapeHtml(m.fecha)}</td><td>${escapeHtml(m.comprobante || "")}</td><td>${escapeHtml(m.concepto || "")}</td>
+      <td>${money(m.debe)}</td><td>${money(m.haber)}</td><td>${money(m.saldo)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6">Sin movimientos</td></tr>`;
+  const win = window.open("", "cuenta-corriente", "width=850,height=760");
+  win.document.write(`
+    <title>Cuenta corriente ${escapeHtml(data.cliente.nombre)}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#172033}
+      .head{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #1463d8;padding-bottom:16px;margin-bottom:18px}
+      .brand{font-weight:bold;font-size:22px}.brand small{display:block;color:#64748b;font-size:13px;margin-top:4px}
+      h1{margin:0;font-size:28px}.meta{text-align:right;line-height:1.5;color:#334155}
+      .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}
+      .summary div{border:1px solid #d9e1ea;border-radius:6px;padding:12px;background:#f8fbff}
+      .summary span{display:block;color:#64748b;font-size:12px;font-weight:bold}.summary strong{display:block;margin-top:6px;font-size:20px}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin-top:12px}
+      td,th{border-bottom:1px solid #ddd;padding:7px;text-align:left}th{background:#eef3f8}
+      .sign{display:flex;justify-content:space-between;gap:40px;margin-top:52px}.sign div{flex:1;border-top:1px solid #333;text-align:center;padding-top:8px}
+    </style>
+    <div class="head">
+      <div><div class="brand">Bebidas San Martin<small>Estado de cuenta corriente</small></div><h1>${escapeHtml(data.cliente.nombre)}</h1></div>
+      <div class="meta">Generado: ${escapeHtml(new Date().toLocaleString("es-AR"))}<br>Telefono: ${escapeHtml(data.cliente.telefono || "-")}<br>CUIT/DNI: ${escapeHtml(data.cliente.cuit || "-")}</div>
+    </div>
+    <div class="summary">
+      <div><span>Saldo actual</span><strong>${money(data.cliente.saldo)}</strong></div>
+      <div><span>Total debe</span><strong>${money(data.resumen.debe)}</strong></div>
+      <div><span>Total pagos</span><strong>${money(data.resumen.haber)}</strong></div>
+      <div><span>Movimientos</span><strong>${escapeHtml(data.resumen.movimientos || 0)}</strong></div>
+    </div>
+    <table><thead><tr><th>Fecha</th><th>Comprobante</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table>
+    <div class="sign"><div>Cliente</div><div>Bebidas San Martin</div></div>
+  `);
+  win.document.close();
+  win.focus();
+  win.print();
 }
 
 async function loadProveedor() {
@@ -320,7 +487,10 @@ async function loadVentas() {
     { key: "cliente", label: "Cliente" },
     { key: "tipo", label: "Tipo" },
     { key: "total", label: "Total", format: money },
-  ], ventas);
+  ], ventas, (r) => `
+    <button type="button" data-print-sale="${r.id}:ticket">Ticket</button>
+    <button type="button" class="secondary" data-print-sale="${r.id}:remito">Remito</button>
+  `);
   renderTicket();
 }
 
@@ -335,7 +505,9 @@ function renderTicket() {
   const items = state.ticket.reduce((a, i) => a + Number(i.cantidad), 0);
   const pago = Number($("#venta-pago").value || 0);
   $("#ticket-total").textContent = `TOTAL: ${money(total)}`;
+  $("#venta-total-mini").textContent = money(total);
   $("#ticket-items").textContent = `${items} item${items === 1 ? "" : "s"}`;
+  $("#ticket-count-badge").textContent = items;
   $("#ticket-vuelto").textContent = `Vuelto: ${money(Math.max(pago - total, 0))}`;
 }
 
@@ -357,7 +529,13 @@ async function loadCompras() {
 async function loadCaja() {
   const actual = await api("/api/caja/actual");
   cajaActual = actual || {};
-  const cajas = await api("/api/caja");
+  const params = new URLSearchParams({
+    q: $("#caja-buscar")?.value || "",
+    desde: $("#caja-desde")?.value || "",
+    hasta: $("#caja-hasta")?.value || "",
+    estado: $("#caja-estado-filtro")?.value || "",
+  });
+  const cajas = await api(`/api/caja/cierres?${params.toString()}`);
   const entradas = Number(actual.efectivo || 0) + Number(actual.transferencia || 0) + Number(actual.debito || 0) + Number(actual.credito || 0) + Number(actual.posnet || 0) + Number(actual.ingresos || 0);
   const total = Number(actual.apertura || 0) + entradas - Number(actual.gastos || 0);
   $("#caja-estado").textContent = actual.id ? "Abierta" : "Cerrada";
@@ -374,8 +552,140 @@ async function loadCaja() {
     { key: "gastos", label: "Gastos", format: money },
     { key: "cierre", label: "Cierre", format: money },
     { key: "diferencia", label: "Diferencia", format: money },
-  ], cajas, (r) => state.user?.rol === "ADMIN" ? `<button type="button" class="secondary" data-cargar-cierre="${r.id}">Modificar</button>` : "");
+  ], cajas, (r) => [
+    `<button type="button" data-ver-caja="${r.id}">Detalle</button>`,
+    `<button type="button" class="secondary" data-imprimir-caja="${r.id}">Imprimir</button>`,
+    state.user?.rol === "ADMIN" ? `<button type="button" class="secondary" data-cargar-cierre="${r.id}">Modificar</button>` : "",
+  ].join(""));
   await loadCierresAdmin();
+}
+
+async function loadDetalleCaja(cajaId, scroll = true) {
+  const data = await api(`/api/caja/${cajaId}/detalle`);
+  cajaDetalleActual = data;
+  $("#detalle-caja-panel").hidden = false;
+  $("#detalle-caja-titulo").textContent = `Detalle caja Nro ${data.caja.id}`;
+  $("#detalle-caja-subtitulo").textContent = `${data.caja.estado || ""} - ${data.caja.fecha || ""}`;
+  $("#detalle-caja-apertura").textContent = money(data.caja.apertura);
+  $("#detalle-caja-sistema").textContent = money(data.totales.sistema);
+  $("#detalle-caja-contado").textContent = money(data.totales.contado);
+  $("#detalle-caja-diferencia").textContent = money(data.totales.diferencia);
+  $("#detalle-caja-diferencia").classList.toggle("diff-ok", Math.abs(Number(data.totales.diferencia || 0)) < 0.01);
+  $("#detalle-caja-diferencia").classList.toggle("diff-bad", Math.abs(Number(data.totales.diferencia || 0)) >= 0.01);
+  table($("#tabla-detalle-caja"), [
+    { key: "medio", label: "Medio" },
+    { key: "sistema", label: "Sistema", format: money },
+    { key: "contado", label: "Contado", format: money },
+    { key: "diferencia", label: "Diferencia", format: money },
+  ], data.medios || []);
+  const obs = data.arqueo?.observaciones || data.arqueo?.motivo_correccion || "";
+  $("#detalle-caja-obs").textContent = obs ? `Observaciones: ${obs}` : "";
+  if (scroll) $("#detalle-caja-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+  return data;
+}
+
+function printCajaDetalle(data = cajaDetalleActual) {
+  if (!data?.caja) return alert("Primero elegi una caja para imprimir.");
+  const rows = (data.medios || []).map((m) => `
+    <tr><td>${escapeHtml(m.medio)}</td><td>${money(m.sistema)}</td><td>${money(m.contado)}</td><td>${money(m.diferencia)}</td></tr>
+  `).join("");
+  const win = window.open("", "arqueo-caja", "width=760,height=760");
+  win.document.write(`
+    <title>Arqueo caja ${escapeHtml(data.caja.id)}</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#172033}
+      .head{display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid #172033;padding-bottom:14px;margin-bottom:18px}
+      h1{font-size:26px;margin:0}.brand{font-weight:bold;font-size:20px}.meta{text-align:right;line-height:1.5}
+      .totals{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0}
+      .totals div{border:1px solid #d9e1ea;border-radius:6px;padding:10px}.totals span{display:block;color:#64748b;font-size:12px}.totals strong{font-size:18px}
+      table{width:100%;border-collapse:collapse;font-size:14px;margin-top:12px}
+      td,th{border-bottom:1px solid #ddd;padding:8px;text-align:left}th{background:#eef3f8}
+      .obs{margin-top:16px;padding:12px;border:1px solid #d9e1ea;border-radius:6px}
+      .sign{display:flex;justify-content:space-between;gap:40px;margin-top:52px}.sign div{flex:1;border-top:1px solid #333;text-align:center;padding-top:8px}
+    </style>
+    <div class="head">
+      <div><div class="brand">Bebidas San Martin</div><h1>Arqueo de caja</h1></div>
+      <div class="meta">Caja Nro ${escapeHtml(data.caja.id)}<br>Fecha: ${escapeHtml(data.caja.fecha)}<br>Estado: ${escapeHtml(data.caja.estado)}</div>
+    </div>
+    <div class="totals">
+      <div><span>Apertura</span><strong>${money(data.caja.apertura)}</strong></div>
+      <div><span>Sistema</span><strong>${money(data.totales.sistema)}</strong></div>
+      <div><span>Contado</span><strong>${money(data.totales.contado)}</strong></div>
+      <div><span>Diferencia</span><strong>${money(data.totales.diferencia)}</strong></div>
+    </div>
+    <table><thead><tr><th>Medio</th><th>Sistema</th><th>Contado</th><th>Diferencia</th></tr></thead><tbody>${rows}</tbody></table>
+    ${(data.arqueo?.observaciones || data.arqueo?.motivo_correccion) ? `<div class="obs">${escapeHtml(data.arqueo.observaciones || data.arqueo.motivo_correccion)}</div>` : ""}
+    <div class="sign"><div>Responsable</div><div>Control</div></div>
+  `);
+  win.document.close();
+  win.focus();
+  win.print();
+}
+
+function tableRowsHtml(rows, columns) {
+  return (rows || []).map((row) => `
+    <tr>${columns.map((col) => `<td>${col.format ? col.format(row[col.key], row) : escapeHtml(row[col.key] ?? "")}</td>`).join("")}</tr>
+  `).join("") || `<tr><td colspan="${columns.length}">Sin datos</td></tr>`;
+}
+
+function printReporte() {
+  if (!state.lastReport) return alert("Actualiza el reporte primero.");
+  const data = state.lastReport;
+  const periodo = `${data.periodo?.desde || ""} al ${data.periodo?.hasta || ""}`;
+  const mediosCols = [
+    { key: "tipo", label: "Medio" },
+    { key: "cantidad", label: "Ventas" },
+    { key: "total", label: "Total", format: money },
+  ];
+  const topCols = [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "cantidad", label: "Cantidad" },
+    { key: "total", label: "Total", format: money },
+  ];
+  const bajosCols = [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "marca", label: "Marca" },
+    { key: "stock", label: "Stock" },
+    { key: "stock_minimo", label: "Minimo" },
+  ];
+  const win = window.open("", "reporte", "width=900,height=800");
+  win.document.write(`
+    <title>Reporte Bebidas San Martin</title>
+    <style>
+      body{font-family:Arial,sans-serif;padding:24px;color:#172033}
+      .head{display:flex;justify-content:space-between;gap:24px;border-bottom:3px solid #1463d8;padding-bottom:16px;margin-bottom:18px}
+      .brand{font-weight:bold;font-size:22px}.brand small{display:block;color:#64748b;font-size:13px;margin-top:4px}
+      h1{margin:0;font-size:28px}.meta{text-align:right;line-height:1.5;color:#334155}
+      .summary{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}
+      .summary div{border:1px solid #d9e1ea;border-radius:6px;padding:12px;background:#f8fbff}
+      .summary span{display:block;color:#64748b;font-size:12px;font-weight:bold}.summary strong{display:block;margin-top:6px;font-size:20px}
+      h2{font-size:18px;margin:22px 0 8px}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:12px}
+      td,th{border-bottom:1px solid #ddd;padding:7px;text-align:left}th{background:#eef3f8}
+      @media print{body{padding:12px}.summary{grid-template-columns:repeat(2,1fr)}}
+    </style>
+    <div class="head">
+      <div><div class="brand">Bebidas San Martin<small>Sistema de inventario y ventas</small></div><h1>Reporte comercial</h1></div>
+      <div class="meta">Periodo: ${escapeHtml(periodo)}<br>Generado: ${escapeHtml(new Date().toLocaleString("es-AR"))}<br>Usuario: ${escapeHtml(state.user?.nombre || state.user?.usuario || "")}</div>
+    </div>
+    <div class="summary">
+      <div><span>Ventas</span><strong>${escapeHtml(data.resumen.ventas || 0)}</strong></div>
+      <div><span>Total vendido</span><strong>${money(data.resumen.total)}</strong></div>
+      <div><span>Ticket promedio</span><strong>${money(data.resumen.ticket_promedio)}</strong></div>
+      <div><span>Stock bajo</span><strong>${escapeHtml((data.bajos || []).length)}</strong></div>
+    </div>
+    <h2>Medios de pago</h2>
+    <table><thead><tr>${mediosCols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead><tbody>${tableRowsHtml(data.medios, mediosCols)}</tbody></table>
+    <h2>Productos mas vendidos</h2>
+    <table><thead><tr>${topCols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead><tbody>${tableRowsHtml(data.top, topCols)}</tbody></table>
+    <h2>Stock bajo</h2>
+    <table><thead><tr>${bajosCols.map((c) => `<th>${c.label}</th>`).join("")}</tr></thead><tbody>${tableRowsHtml(data.bajos, bajosCols)}</tbody></table>
+  `);
+  win.document.close();
+  win.focus();
+  win.print();
 }
 
 function arqueoSistema() {
@@ -499,9 +809,11 @@ async function loadReportes(ev) {
   $("#reportes-form").elements.hasta.value = hasta;
   const data = await api(`/api/reportes?desde=${encodeURIComponent(desde)}&hasta=${encodeURIComponent(hasta)}`);
   state.lastReport = data;
+  $("#rep-periodo").textContent = `Periodo: ${data.periodo.desde} al ${data.periodo.hasta}`;
   $("#rep-ventas").textContent = data.resumen.ventas || 0;
   $("#rep-total").textContent = money(data.resumen.total);
-  $("#rep-bajos").textContent = data.bajos.length;
+  $("#rep-promedio").textContent = money(data.resumen.ticket_promedio);
+  $("#rep-bajos").textContent = `${data.bajos.length} productos con stock bajo`;
   $("#rep-top").textContent = data.top[0]?.nombre || "-";
   table($("#tabla-medios"), [
     { key: "tipo", label: "Medio" },
@@ -532,6 +844,57 @@ async function loadReportes(ev) {
   ], data.bajos);
 }
 
+async function loadConfiguracion() {
+  await loadOptions();
+  $("#precio-categoria-form").elements.categoria_id.innerHTML = [
+    `<option value="__all__">Todas las categorias</option>`,
+    `<option value="__none__">Sin categoria</option>`,
+    ...(state.options.categorias || []).map((c) => `<option value="${c.id}">${c.nombre}</option>`),
+  ].join("");
+  const backups = await api("/api/backups");
+  table($("#tabla-backups"), [
+    { key: "archivo", label: "Archivo" },
+    { key: "fecha", label: "Fecha" },
+    { key: "tamano", label: "Tamano", format: (v) => `${(Number(v || 0) / 1024).toFixed(1)} KB` },
+  ], backups, (r) => `<button type="button" data-download-backup="${r.archivo}">Descargar</button>`);
+  const panel = $("#auditoria-panel");
+  if (!panel) return;
+  if (state.user?.rol !== "ADMIN") {
+    panel.hidden = true;
+    $("#restore-form").hidden = true;
+    return;
+  }
+  $("#restore-form").hidden = false;
+  panel.hidden = false;
+  const q = encodeURIComponent($("#auditoria-buscar")?.value || "");
+  const logs = await api(`/api/seguridad/auditoria?q=${q}`);
+  table($("#tabla-auditoria"), [
+    { key: "fecha", label: "Fecha" },
+    { key: "usuario", label: "Usuario" },
+    { key: "accion", label: "Accion" },
+    { key: "detalle", label: "Detalle" },
+  ], logs);
+}
+
+async function previewPreciosCategoria(aplicar = false) {
+  const formData = Object.fromEntries(new FormData($("#precio-categoria-form")));
+  formData.redondear = $("#precio-categoria-form").elements.redondear.checked ? 1 : 0;
+  formData.aplicar = aplicar ? 1 : 0;
+  if (aplicar && !confirm("Seguro que queres aplicar esta actualizacion de precios?")) return;
+  const data = await api("/api/productos/actualizar-precios", { method: "POST", body: JSON.stringify(formData) });
+  $("#precio-categoria-status").textContent = `${data.aplicado ? "Cambios aplicados" : "Vista previa"}: ${data.cantidad} productos en ${data.categoria}.`;
+  table($("#tabla-preview-precios"), [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "precio_anterior", label: "Antes", format: money },
+    { key: "precio_nuevo", label: "Nuevo", format: money },
+  ], data.cambios || []);
+  if (aplicar) {
+    await loadOptions();
+    if (state.current === "productos") await loadProductos();
+  }
+}
+
 async function refresh() {
   const current = state.current;
   if (!canView(current)) return;
@@ -544,6 +907,7 @@ async function refresh() {
   if (current === "proveedores") return loadProveedor();
   if (current === "usuarios") return loadUsuarios();
   if (current === "reportes") return loadReportes();
+  if (current === "configuracion") return loadConfiguracion();
   if (current === "categorias" || current === "marcas") return loadSimple(current);
 }
 
@@ -665,6 +1029,17 @@ document.addEventListener("click", async (ev) => {
     $("#search").value = "";
     await refresh();
   }
+  const shortcut = ev.target.dataset.viewShortcut;
+  if (shortcut) {
+    if (!canView(shortcut)) return;
+    const button = $(`aside button[data-view="${shortcut}"]`);
+    $$("aside button").forEach((b) => b.classList.toggle("active", b === button));
+    $$(".view").forEach((v) => v.classList.remove("active"));
+    state.current = shortcut;
+    $(`#${state.current}`).classList.add("active");
+    $("#search").value = "";
+    await refresh();
+  }
   const del = ev.target.dataset.del;
   if (del && confirm("Seguro que queres borrar este registro?")) {
     const [tableName, id] = del.split(":");
@@ -675,6 +1050,8 @@ document.addEventListener("click", async (ev) => {
   if (productEdit) fillForm("#producto-form", state.productos.find((p) => String(p.id) === productEdit));
   const clientEdit = ev.target.dataset.editCliente;
   if (clientEdit) fillForm("#cliente-form", (await api("/api/clientes")).find((c) => String(c.id) === clientEdit));
+  const verCuenta = ev.target.dataset.verCuenta;
+  if (verCuenta) await loadCuentaCliente(verCuenta);
   const provEdit = ev.target.dataset.editProveedor;
   if (provEdit) fillForm("#proveedor-form", (await api("/api/proveedores")).find((p) => String(p.id) === provEdit));
   const userEdit = ev.target.dataset.editUsuario;
@@ -709,6 +1086,25 @@ document.addEventListener("click", async (ev) => {
   const cargarCierre = ev.target.dataset.cargarCierre;
   if (cargarCierre) {
     await loadCorreccionArqueo(cargarCierre);
+  }
+  const verCaja = ev.target.dataset.verCaja;
+  if (verCaja) {
+    await loadDetalleCaja(verCaja);
+  }
+  const imprimirCaja = ev.target.dataset.imprimirCaja;
+  if (imprimirCaja) {
+    const data = await loadDetalleCaja(imprimirCaja, false);
+    printCajaDetalle(data);
+  }
+  const printSale = ev.target.dataset.printSale;
+  if (printSale) {
+    const [saleId, tipo] = printSale.split(":");
+    const data = await api(`/api/ventas/${saleId}/detalle`);
+    printDocumento(tipo, data);
+  }
+  const downloadBackup = ev.target.dataset.downloadBackup;
+  if (downloadBackup) {
+    window.location.href = `/api/backups/${encodeURIComponent(downloadBackup)}`;
   }
 });
 
@@ -774,31 +1170,17 @@ $("#venta-form").onsubmit = async (ev) => {
 
 $("#print-ticket").onclick = () => {
   if (!state.lastSale) return alert("Todavia no hay un ticket para imprimir.");
-  const sale = state.lastSale.venta;
-  const lines = state.lastSale.detalle.map((item) => `
-    <tr>
-      <td>${item.cantidad}</td>
-      <td>${item.producto}</td>
-      <td>${money(item.precio)}</td>
-      <td>${money(item.subtotal)}</td>
-    </tr>`).join("");
-  const win = window.open("", "ticket", "width=420,height=650");
-  win.document.write(`
-    <title>Ticket ${sale.id}</title>
-    <style>
-      body{font-family:Arial,sans-serif;padding:16px}
-      h1{font-size:20px;margin:0 0 8px}
-      table{width:100%;border-collapse:collapse;font-size:13px}
-      td,th{border-bottom:1px solid #ddd;padding:6px;text-align:left}
-      .total{text-align:right;font-size:18px;font-weight:bold;margin-top:12px}
-    </style>
-    <h1>Bebidas San Martin</h1>
-    <p>Ticket Nro ${sale.id}<br>Fecha: ${sale.fecha}<br>Cliente: ${sale.cliente || ""}<br>Medio: ${sale.tipo}</p>
-    <table><thead><tr><th>Cant</th><th>Producto</th><th>Precio</th><th>Subt.</th></tr></thead><tbody>${lines}</tbody></table>
-    <div class="total">TOTAL ${money(sale.total)}</div>
-  `);
-  win.document.close();
-  win.print();
+  printDocumento("ticket", state.lastSale);
+};
+
+$("#print-presupuesto").onclick = () => {
+  if (!state.ticket.length) return alert("Agregue productos para armar el presupuesto.");
+  printDocumento("presupuesto", ventaDesdeCarrito());
+};
+
+$("#print-remito").onclick = () => {
+  if (!state.ticket.length) return alert("Agregue productos para armar el remito.");
+  printDocumento("remito", ventaDesdeCarrito());
 };
 
 $("#caja-form").onsubmit = async (ev) => {
@@ -819,6 +1201,18 @@ $("#cierre-form").onsubmit = async (ev) => {
   await loadCaja();
 };
 $("#cierre-form").addEventListener("input", renderArqueo);
+["caja-buscar", "caja-desde", "caja-hasta", "caja-estado-filtro"].forEach((id) => {
+  const el = $(`#${id}`);
+  if (el) el.addEventListener("input", loadCaja);
+});
+$("#limpiar-filtros-caja").addEventListener("click", async () => {
+  ["caja-buscar", "caja-desde", "caja-hasta", "caja-estado-filtro"].forEach((id) => {
+    const el = $(`#${id}`);
+    if (el) el.value = "";
+  });
+  await loadCaja();
+});
+$("#imprimir-detalle-caja").addEventListener("click", () => printCajaDetalle());
 $("#buscar-cierre-texto").addEventListener("input", loadCierresAdmin);
 $("#actualizar-cierres").addEventListener("click", loadCierresAdmin);
 $("#corregir-arqueo-form").addEventListener("input", renderCorreccionArqueo);
@@ -836,7 +1230,51 @@ $("#corregir-arqueo-form").onsubmit = async (ev) => {
 $("#crear-backup").onclick = async () => {
   const result = await api("/api/backup", { method: "POST", body: "{}" });
   $("#backup-status").textContent = `Backup creado: ${result.archivo}`;
+  await loadConfiguracion();
 };
+
+$("#restore-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  if (!confirm("Restaurar un backup reemplaza la base actual. Se crea una copia previa automaticamente. Continuar?")) return;
+  const formData = new FormData(ev.target);
+  const res = await fetch("/api/backups/restaurar", { method: "POST", body: formData });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return alert(data.error || "No se pudo restaurar el backup.");
+  ev.target.reset();
+  $("#backup-status").textContent = `Backup restaurado. Copia previa: ${data.archivo_previo}`;
+  await loadConfiguracion();
+  await refresh();
+};
+
+$("#cuenta-pago-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const data = Object.fromEntries(new FormData(ev.target));
+  await api(`/api/clientes/${data.cliente_id}/cuenta/pago`, { method: "POST", body: JSON.stringify(data) });
+  ev.target.reset();
+  await loadClientes();
+  await loadCuentaCliente(data.cliente_id, false);
+  alert("Pago registrado.");
+};
+
+$("#imprimir-cuenta").addEventListener("click", () => printCuentaCliente());
+
+$("#preview-precios").addEventListener("click", () => previewPreciosCategoria(false));
+$("#precio-categoria-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  await previewPreciosCategoria(true);
+  await loadConfiguracion();
+};
+
+$("#password-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  await api("/api/seguridad/cambiar-password", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
+  ev.target.reset();
+  await loadConfiguracion();
+  alert("Contrasena actualizada.");
+};
+
+$("#auditoria-buscar").addEventListener("input", loadConfiguracion);
+$("#actualizar-auditoria").addEventListener("click", loadConfiguracion);
 
 $("#export-productos").onclick = () => {
   downloadText("productos.csv", toCsv(state.productos));
@@ -851,6 +1289,8 @@ $("#export-report").onclick = () => {
   ];
   downloadText("reporte.csv", toCsv(rows));
 };
+
+$("#print-report").onclick = printReporte;
 
 (async function init() {
   const me = await api("/api/me");

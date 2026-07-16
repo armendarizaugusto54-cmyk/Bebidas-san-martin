@@ -1154,3 +1154,109 @@ input[readonly] {
     grid-template-columns: 1fr;
   }
 }
+
+
+/* =========================================================
+   USUARIOS Y PERMISOS
+   ========================================================= */
+.usuarios-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--brand);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.usuarios-head h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+}
+
+.usuarios-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.usuario-form {
+  display: grid;
+  gap: 12px;
+}
+
+.usuario-activo {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.usuario-form-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.usuario-form-actions button {
+  min-height: 44px;
+}
+
+.permisos-panel {
+  border-left: 6px solid var(--good);
+}
+
+.permisos-acciones-masivas {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.permisos-table-wrap {
+  overflow: auto;
+}
+
+.permisos-table th:not(:first-child),
+.permisos-table td:not(:first-child) {
+  text-align: center;
+}
+
+.permisos-table input[type="checkbox"] {
+  width: 21px;
+  min-height: 21px;
+  cursor: pointer;
+}
+
+.guardar-permisos-btn {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 14px;
+  font-size: 16px;
+}
+
+[data-permission-hidden="1"] {
+  display: none !important;
+}
+
+@media (max-width: 950px) {
+  .usuarios-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 650px) {
+  .usuarios-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .usuario-form-actions,
+  .permisos-acciones-masivas {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+}

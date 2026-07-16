@@ -3,13 +3,41 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let state = { user: null, options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, cajaActual: null, cajaDetalle: null, productosFiltrados: [], clientesFiltrados: [] };
+let state = { user: null, permissions: {}, usuarios: [], options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, cajaActual: null, cajaDetalle: null, productosFiltrados: [], clientesFiltrados: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "No se pudo completar la accion.");
   return data;
+}
+
+function permitido(modulo, accion = "ver") {
+  if (state.user?.rol === "ADMIN") return true;
+  return Boolean(state.permissions?.[modulo]?.[accion]);
+}
+
+function aplicarPermisosInterfaz() {
+  $$("aside [data-module]").forEach((elemento) => {
+    elemento.hidden = !permitido(elemento.dataset.module, "ver");
+  });
+
+  const reglas = [
+    ["#producto-form", "Productos", "agregar"],
+    ["#categoria-form", "Productos", "agregar"],
+    ["#recalcular-categoria-form", "Productos", "editar"],
+    ["#cliente-form", "Clientes", "agregar"],
+    ["#pago-form", "Clientes", "agregar"],
+    ["#ajuste-cuenta-form", "Clientes", "editar"],
+    ["#abrir-caja-form", "Caja", "agregar"],
+    ["#mov-caja-form", "Caja", "agregar"],
+    ["#cerrar-caja-form", "Caja", "editar"],
+  ];
+
+  reglas.forEach(([selector, modulo, accion]) => {
+    const elemento = $(selector);
+    if (elemento) elemento.dataset.permissionHidden = permitido(modulo, accion) ? "0" : "1";
+  });
 }
 
 function table(el, columns, data, actions) {
@@ -769,6 +797,106 @@ async function loadHerramientas() {
   }
 }
 
+const MODULOS_PERMISOS = [
+  "Dashboard",
+  "Ventas",
+  "Productos",
+  "Clientes",
+  "Caja",
+  "Reportes",
+  "Herramientas",
+  "Usuarios",
+];
+
+function resetUsuarioForm() {
+  const form = $("#usuario-form");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.activo.checked = true;
+  form.elements.rol.value = "CAJERO";
+  $("#usuario-form-title").textContent = "Nuevo usuario";
+}
+
+function editarUsuario(usuario) {
+  const form = $("#usuario-form");
+  form.elements.id.value = usuario.id;
+  form.elements.nombre.value = usuario.nombre || "";
+  form.elements.usuario.value = usuario.usuario || "";
+  form.elements.password.value = "";
+  form.elements.rol.value = usuario.rol;
+  form.elements.activo.checked = Boolean(usuario.activo);
+  $("#usuario-form-title").textContent = `Editar usuario: ${usuario.nombre}`;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.elements.nombre.focus();
+}
+
+function renderUsuarios() {
+  table($("#tabla-usuarios"), [
+    { key: "nombre", label: "Nombre" },
+    { key: "usuario", label: "Usuario" },
+    { key: "rol", label: "Rol" },
+    { key: "activo", label: "Estado", format: (v) => Number(v) ? "Activo" : "Inactivo" },
+  ], state.usuarios, (usuario) => `
+    <button type="button" data-permisos-usuario="${usuario.id}">Permisos</button>
+    <button type="button" data-edit-usuario="${usuario.id}">Editar</button>
+    ${Number(usuario.id) !== Number(state.user.id)
+      ? `<button type="button" class="danger" data-del-usuario="${usuario.id}">Eliminar</button>`
+      : ""}
+  `);
+}
+
+async function loadUsuarios() {
+  if (state.user?.rol !== "ADMIN") return;
+  state.usuarios = await api("/api/usuarios");
+  renderUsuarios();
+}
+
+function abrirPermisos(usuario) {
+  if (!usuario) return;
+
+  $("#permisos-panel").hidden = false;
+  $("#permisos-usuario-id").value = usuario.id;
+  $("#permisos-title").textContent = `Permisos - ${usuario.nombre}`;
+
+  const esAdmin = usuario.rol === "ADMIN";
+  $("#permisos-grid").innerHTML = MODULOS_PERMISOS.map((modulo) => {
+    const permiso = usuario.permisos?.[modulo] || {};
+    return `
+      <tr data-permiso-modulo="${modulo}">
+        <td><strong>${modulo}</strong></td>
+        ${["ver", "agregar", "editar", "eliminar"].map((accion) => `
+          <td>
+            <input
+              type="checkbox"
+              data-permiso-accion="${accion}"
+              ${permiso[accion] || esAdmin ? "checked" : ""}
+              ${esAdmin ? "disabled" : ""}
+            >
+          </td>
+        `).join("")}
+      </tr>
+    `;
+  }).join("");
+
+  $("#guardar-permisos").hidden = esAdmin;
+  $("#permisos-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function permisosDesdePantalla() {
+  const permisos = {};
+
+  $$("#permisos-grid tr[data-permiso-modulo]").forEach((fila) => {
+    const modulo = fila.dataset.permisoModulo;
+    permisos[modulo] = {};
+
+    $$("[data-permiso-accion]", fila).forEach((check) => {
+      permisos[modulo][check.dataset.permisoAccion] = check.checked;
+    });
+  });
+
+  return permisos;
+}
+
 async function refresh() {
   if (state.current === "inicio") return loadDashboard();
   if (state.current === "productos") return loadProductos();
@@ -777,6 +905,7 @@ async function refresh() {
   if (state.current === "caja") return loadCaja();
   if (state.current === "reportes") return loadReportes();
   if (state.current === "herramientas") return loadHerramientas();
+  if (state.current === "usuarios") return loadUsuarios();
 }
 
 document.addEventListener("click", async (ev) => {
@@ -823,6 +952,23 @@ document.addEventListener("click", async (ev) => {
       try {
         await api(`/api/clientes/${cliente.id}`, { method: "DELETE" });
         await loadClientes();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  }
+  if (ev.target.dataset.editUsuario) {
+    editarUsuario(state.usuarios.find((u) => String(u.id) === String(ev.target.dataset.editUsuario)));
+  }
+  if (ev.target.dataset.permisosUsuario) {
+    abrirPermisos(state.usuarios.find((u) => String(u.id) === String(ev.target.dataset.permisosUsuario)));
+  }
+  if (ev.target.dataset.delUsuario) {
+    const usuario = state.usuarios.find((u) => String(u.id) === String(ev.target.dataset.delUsuario));
+    if (usuario && confirm(`¿Eliminar definitivamente al usuario "${usuario.usuario}"?`)) {
+      try {
+        await api(`/api/usuarios/${usuario.id}`, { method: "DELETE" });
+        await loadUsuarios();
       } catch (error) {
         alert(error.message);
       }
@@ -1484,9 +1630,98 @@ $("#crear-backup").onclick = async () => {
   await loadHerramientas();
 };
 
+$("#usuario-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  const form = ev.target;
+  const data = Object.fromEntries(new FormData(form));
+  data.activo = form.elements.activo.checked ? 1 : 0;
+
+  try {
+    await api("/api/usuarios", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    resetUsuarioForm();
+    await loadUsuarios();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#nuevo-usuario").onclick = () => {
+  resetUsuarioForm();
+  $("#usuario-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#usuario-form").elements.nombre.focus();
+};
+
+$("#cancelar-usuario").onclick = resetUsuarioForm;
+
+$("#cerrar-permisos").onclick = () => {
+  $("#permisos-panel").hidden = true;
+};
+
+$("#marcar-todos-permisos").onclick = () => {
+  $$("#permisos-grid input[type='checkbox']:not(:disabled)").forEach((check) => {
+    check.checked = true;
+  });
+};
+
+$("#desmarcar-todos-permisos").onclick = () => {
+  $$("#permisos-grid input[type='checkbox']:not(:disabled)").forEach((check) => {
+    check.checked = false;
+  });
+};
+
+$("#permisos-grid").addEventListener("change", (ev) => {
+  if (!ev.target.matches("[data-permiso-accion]")) return;
+
+  const fila = ev.target.closest("tr");
+  const ver = $('[data-permiso-accion="ver"]', fila);
+
+  if (ev.target.dataset.permisoAccion === "ver" && !ev.target.checked) {
+    $$("[data-permiso-accion]", fila).forEach((check) => check.checked = false);
+  } else if (ev.target.checked) {
+    ver.checked = true;
+  }
+});
+
+$("#guardar-permisos").onclick = async () => {
+  const usuarioId = $("#permisos-usuario-id").value;
+  if (!usuarioId) return;
+
+  try {
+    await api(`/api/usuarios/${usuarioId}/permisos`, {
+      method: "PUT",
+      body: JSON.stringify({ permisos: permisosDesdePantalla() }),
+    });
+    alert("Permisos guardados correctamente.");
+    await loadUsuarios();
+    abrirPermisos(state.usuarios.find((u) => String(u.id) === String(usuarioId)));
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
 (async function init() {
   const me = await api("/api/me");
   state.user = me.user;
+  state.permissions = me.permissions || {};
+
+  aplicarPermisosInterfaz();
+
+  const botonActivo = $("aside button.active");
+  if (botonActivo?.hidden) {
+    const primeroVisible = $$("aside button[data-view]").find((boton) => !boton.hidden);
+    if (primeroVisible) {
+      $$("aside button").forEach((boton) => boton.classList.remove("active"));
+      primeroVisible.classList.add("active");
+      $$(".view").forEach((vista) => vista.classList.remove("active"));
+      state.current = primeroVisible.dataset.view;
+      $(`#${state.current}`).classList.add("active");
+    }
+  }
+
   await loadOptions();
   await refresh();
 })();

@@ -8,8 +8,13 @@
 </head>
 <body class="login-body">
   <main class="login-panel">
-    <h1>Bebidas San Martin</h1>
-    <p>Sistema online</p>
+    <div class="login-brand">
+      <img src="{{ url_for('static', filename='logo-bebidas.svg') }}" alt="Bebidas San Martin">
+      <div>
+        <h1>Bebidas San Martin</h1>
+        <p>Sistema online</p>
+      </div>
+    </div>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
     <form method="post">
       <label>Usuario<input name="usuario" autocomplete="username" required></label>

@@ -160,9 +160,18 @@
         </form>
       </div>
       <div class="panel"><table id="tabla-caja"></table></div>
+      <div id="buscar-cierres-admin" class="panel admin-correction" hidden>
+        <h2>Buscar cierres para corregir</h2>
+        <p class="muted">Solo administrador. Elegi un cierre cerrado para cargarlo abajo y corregir el arqueo.</p>
+        <div class="admin-search-row">
+          <input id="buscar-cierre-texto" placeholder="Buscar por fecha, diferencia o usuario">
+          <button type="button" id="actualizar-cierres">Actualizar</button>
+        </div>
+        <table id="tabla-cierres-admin"></table>
+      </div>
       <form id="corregir-arqueo-form" class="panel admin-correction" hidden>
-        <h2>Correccion administrativa del ultimo cierre</h2>
-        <p class="muted">Solo administrador. Usar cuando se cargo mal un conteo al cerrar caja.</p>
+        <h2>Correccion administrativa de cierre</h2>
+        <p class="muted">Selecciona un cierre del buscador, ajusta los importes y guarda el motivo.</p>
         <input type="hidden" name="caja_id">
         <input type="hidden" name="arqueo_id">
         <div class="arqueo-grid">

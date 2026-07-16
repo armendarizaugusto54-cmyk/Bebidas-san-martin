@@ -14,7 +14,12 @@ DB_PATH = os.path.join(BASE_DIR, "bebidas.db")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("BEBIDAS_SECRET", "cambiar-esta-clave")
-app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("RENDER") == "true",
+    SESSION_PERMANENT=False,
+)
 
 
 def db():
@@ -388,6 +393,15 @@ def guard():
     return None
 
 
+@app.after_request
+def no_cache_paginas_privadas(response):
+    if session.get("user"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
@@ -396,7 +410,15 @@ def login():
         password = request.form.get("password", "")
         user = one("SELECT * FROM usuarios WHERE usuario=? AND activo=1", (usuario,))
         if user and verify_password(password, user["password"]):
-            session["user"] = {"id": user["id"], "nombre": user["nombre"], "usuario": user["usuario"], "rol": user["rol"]}
+            session.clear()
+            session.permanent = False
+            session["user"] = {
+                "id": user["id"],
+                "nombre": user["nombre"],
+                "usuario": user["usuario"],
+                "rol": user["rol"],
+            }
+            session["fresh_login"] = True
             audit("login", "Ingreso correcto")
             return redirect(url_for("index"))
         audit("login_fallido", usuario)
@@ -413,7 +435,12 @@ def logout():
 
 @app.get("/")
 def index():
-    return render_template("index.html", user=session["user"])
+    fresh_login = bool(session.pop("fresh_login", False))
+    return render_template(
+        "index.html",
+        user=session["user"],
+        fresh_login=fresh_login,
+    )
 
 
 @app.get("/api/me")

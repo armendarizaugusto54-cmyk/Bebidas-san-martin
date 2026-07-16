@@ -478,18 +478,155 @@
     </section>
 
     <section id="caja" class="view">
-      <div class="cards">
-        <article><span>Estado</span><strong id="caja-estado">Cerrada</strong></article>
-        <article><span>Apertura</span><strong id="caja-apertura">$0</strong></article>
-        <article><span>Entradas</span><strong id="caja-entradas">$0</strong></article>
-        <article><span>Total sistema</span><strong id="caja-total">$0</strong></article>
+      <div class="caja-head">
+        <div>
+          <h2>Caja</h2>
+          <p class="muted">Apertura, movimientos, arqueo por medio de pago y control de diferencias.</p>
+        </div>
+        <div id="caja-estado-badge" class="caja-estado-badge cerrada">CERRADA</div>
       </div>
-      <div class="split caja-layout">
-        <form id="abrir-caja-form" class="panel"><h2>Abrir caja</h2><label>Apertura<input name="apertura" type="number" step="0.01" value="0"></label><button>Abrir</button></form>
-        <form id="mov-caja-form" class="panel"><h2>Movimiento</h2><label>Tipo<select name="tipo"><option value="ingreso">Ingreso</option><option value="gasto">Gasto</option></select></label><label>Descripcion<input name="descripcion"></label><label>Importe<input name="importe" type="number" step="0.01"></label><button>Registrar</button></form>
-        <form id="cerrar-caja-form" class="panel"><h2>Cierre</h2><div id="arqueo-grid" class="arqueo"></div><label>Observaciones<input name="observaciones"></label><button class="danger">Cerrar caja</button></form>
+
+      <div class="cards caja-resumen-cards">
+        <article><span>Apertura</span><strong id="caja-apertura">$0.00</strong></article>
+        <article><span>Ventas y movimientos</span><strong id="caja-entradas">$0.00</strong></article>
+        <article><span>Total sistema</span><strong id="caja-total">$0.00</strong></article>
+        <article><span>Última diferencia</span><strong id="caja-diferencia">$0.00</strong></article>
       </div>
-      <div class="panel"><h2>Historial</h2><table id="tabla-caja"></table></div>
+
+      <div class="caja-operaciones-grid">
+        <form id="abrir-caja-form" class="panel caja-form">
+          <div class="panel-head">
+            <div>
+              <h2>Abrir caja</h2>
+              <p class="muted">Ingrese el efectivo inicial.</p>
+            </div>
+          </div>
+          <label>Monto de apertura
+            <input name="apertura" type="number" min="0" step="0.01" value="0" required>
+          </label>
+          <label>Observaciones
+            <input name="observaciones" autocomplete="off">
+          </label>
+          <button type="submit" class="success">Abrir caja</button>
+        </form>
+
+        <form id="mov-caja-form" class="panel caja-form">
+          <div class="panel-head">
+            <div>
+              <h2>Movimiento manual</h2>
+              <p class="muted">Ingresos, gastos, aportes y retiros.</p>
+            </div>
+          </div>
+          <label>Tipo
+            <select name="tipo">
+              <option value="ingreso">Ingreso</option>
+              <option value="aporte">Aporte</option>
+              <option value="gasto">Gasto</option>
+              <option value="retiro">Retiro</option>
+            </select>
+          </label>
+          <label>Descripción
+            <input name="descripcion" required autocomplete="off">
+          </label>
+          <label>Importe
+            <input name="importe" type="number" min="0.01" step="0.01" required>
+          </label>
+          <button type="submit">Registrar movimiento</button>
+        </form>
+      </div>
+
+      <form id="cerrar-caja-form" class="panel arqueo-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Arqueo y cierre</h2>
+            <p class="muted">Complete manualmente lo contado. La diferencia se calcula sola.</p>
+          </div>
+        </div>
+
+        <div class="arqueo-table-wrap">
+          <table class="arqueo-table">
+            <thead>
+              <tr>
+                <th>Medio de pago</th>
+                <th>Sistema</th>
+                <th>Contado</th>
+                <th>Diferencia</th>
+              </tr>
+            </thead>
+            <tbody id="arqueo-grid"></tbody>
+            <tfoot>
+              <tr>
+                <th>TOTAL</th>
+                <th id="arqueo-total-sistema">$0.00</th>
+                <th id="arqueo-total-contado">$0.00</th>
+                <th id="arqueo-total-diferencia">$0.00</th>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div id="arqueo-resultado" class="arqueo-resultado neutro">Complete los importes contados.</div>
+
+        <div class="billetes-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Conteo de efectivo por denominación</h2>
+              <p class="muted">Opcional. El total se coloca automáticamente en Efectivo contado.</p>
+            </div>
+            <strong id="billetes-total">$0.00</strong>
+          </div>
+          <div id="billetes-grid" class="billetes-grid"></div>
+        </div>
+
+        <label>Observaciones del cierre
+          <input name="observaciones" autocomplete="off">
+        </label>
+
+        <button type="submit" class="danger cerrar-caja-btn">Cerrar caja</button>
+      </form>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Historial de cajas</h2>
+            <p class="muted">Consulte, imprima o corrija cierres. Las correcciones son solo para ADMIN.</p>
+          </div>
+        </div>
+        <table id="tabla-caja"></table>
+      </div>
+
+      <div id="caja-detalle-panel" class="panel caja-detalle-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="caja-detalle-title">Detalle de caja</h2>
+            <p id="caja-detalle-sub" class="muted"></p>
+          </div>
+          <div class="actions">
+            <button type="button" id="imprimir-cierre">Imprimir cierre</button>
+            <button type="button" class="secondary" id="cerrar-detalle-caja">Cerrar detalle</button>
+          </div>
+        </div>
+
+        <div id="caja-detalle-resumen" class="caja-detalle-resumen"></div>
+        <table id="tabla-caja-detalle"></table>
+        <h2 class="movimientos-title">Movimientos manuales</h2>
+        <table id="tabla-caja-movimientos"></table>
+
+        <form id="corregir-caja-form" class="corregir-caja-form" hidden>
+          <input type="hidden" name="caja_id">
+          <div class="panel-head">
+            <div>
+              <h2>Corrección administrativa</h2>
+              <p class="muted">Permite acomodar importes contados cuando hubo un error de carga.</p>
+            </div>
+          </div>
+          <div id="correccion-grid" class="correccion-grid"></div>
+          <label>Motivo de la corrección
+            <input name="motivo" required autocomplete="off">
+          </label>
+          <button type="submit" class="danger">Guardar corrección</button>
+        </form>
+      </div>
     </section>
 
     <section id="reportes" class="view">

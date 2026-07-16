@@ -292,3 +292,176 @@ label {
   .sale-head-total { justify-items: start; }
   .arqueo { grid-template-columns: 1fr; }
 }
+
+
+/* =========================================================
+   VENTAS 2.0
+   ========================================================= */
+#venta-form {
+  display: block;
+}
+
+.ventas-grid {
+  display: grid;
+  grid-template-columns: minmax(360px, 430px) minmax(540px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.venta-carga,
+.ticket-panel {
+  min-height: 440px;
+}
+
+.venta-carga {
+  display: grid;
+  align-content: start;
+  gap: 15px;
+}
+
+.venta-datos {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.venta-agregar {
+  display: grid;
+  grid-template-columns: 125px 1fr;
+  gap: 10px;
+  align-items: end;
+}
+
+.venta-agregar #add-item {
+  min-height: 44px;
+  font-size: 15px;
+}
+
+.producto-ayuda {
+  padding: 10px 12px;
+  border: 1px dashed #b9c7d8;
+  border-radius: 7px;
+  background: #f8fbff;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.ticket-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ticket-head {
+  flex: 0 0 auto;
+}
+
+.ticket-scroll {
+  flex: 1;
+  min-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+#ticket th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+#ticket td,
+#ticket th {
+  vertical-align: middle;
+}
+
+#ticket tbody tr.ticket-selected td {
+  background: #eaf2ff;
+}
+
+.ticket-qty {
+  width: 88px;
+  min-height: 34px;
+  text-align: center;
+  font-weight: 700;
+}
+
+.ticket-remove {
+  min-height: 32px;
+  padding: 0 10px;
+}
+
+.ticket-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 12px;
+  padding: 14px;
+  border-radius: 8px;
+  background: #edf7f1;
+}
+
+.ticket-footer > span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.ticket-footer .total {
+  margin: 0;
+  color: var(--good);
+  font-size: 27px;
+}
+
+.venta-final-actions {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(150px, 210px) minmax(240px, 1fr);
+  gap: 12px;
+  padding: 14px;
+}
+
+.venta-final-actions button {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.venta-finalizar {
+  font-size: 17px !important;
+}
+
+.ghost-danger {
+  background: #fff1f1;
+  color: var(--bad);
+  border: 1px solid #efbcbc;
+}
+
+.ghost-danger:hover {
+  background: var(--bad);
+  color: white;
+}
+
+@media (max-width: 1120px) {
+  .ventas-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .venta-carga,
+  .ticket-panel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .venta-datos,
+  .venta-agregar,
+  .venta-final-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-footer {
+    align-items: flex-end;
+    flex-direction: column;
+  }
+}

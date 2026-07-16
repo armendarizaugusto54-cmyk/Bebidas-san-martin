@@ -43,6 +43,7 @@ function setVentaProduct(product) {
   $("#venta-producto").value = product.id;
   $("#venta-producto-nombre").value = `${product.codigo || ""} - ${product.nombre} - ${money(product.precio_venta)} | Stock: ${product.stock ?? 0}`;
   $("#venta-cantidad").focus();
+  $("#venta-cantidad").select();
 }
 
 function renderProductSearch() {
@@ -170,18 +171,58 @@ function ticketTotal() {
 }
 
 function renderTicket() {
-  table($("#ticket"), [
-    { key: "nombre", label: "Producto" },
-    { key: "cantidad", label: "Cant." },
-    { key: "precio", label: "Precio", format: money },
-    { key: "subtotal", label: "Subtotal", format: money },
-  ], state.ticket, (r) => `<button class="danger" data-remove="${r.producto_id}">Quitar</button>`);
+  const ticket = $("#ticket");
+
+  ticket.innerHTML = `
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th>Cantidad</th>
+        <th>Precio</th>
+        <th>Subtotal</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      ${state.ticket.map((item, index) => `
+        <tr data-ticket-index="${index}">
+          <td><strong>${escapeHtml(item.nombre)}</strong></td>
+          <td>
+            <input
+              class="ticket-qty"
+              data-ticket-qty="${index}"
+              type="number"
+              min="1"
+              step="1"
+              value="${Number(item.cantidad || 1)}"
+              title="Cambiar cantidad"
+            >
+          </td>
+          <td>${money(item.precio)}</td>
+          <td><strong>${money(item.subtotal)}</strong></td>
+          <td>
+            <button
+              type="button"
+              class="danger ticket-remove"
+              data-remove-index="${index}"
+              title="Quitar producto"
+            >Quitar</button>
+          </td>
+        </tr>
+      `).join("") || `<tr><td colspan="5">Todavía no agregó productos al ticket.</td></tr>`}
+    </tbody>
+  `;
+
   const total = ticketTotal();
   const items = state.ticket.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+
   $("#ticket-total").textContent = `TOTAL: ${money(total)}`;
   $("#ticket-total-inline").textContent = money(total);
   $("#venta-total-top").textContent = money(total);
-  $("#ticket-items").textContent = `${items} producto${items === 1 ? "" : "s"}`;
+  $("#ticket-items").textContent = `${items} unidad${items === 1 ? "" : "es"}`;
+
+  const resumen = $("#ticket-productos-resumen");
+  if (resumen) resumen.textContent = `${items} unidad${items === 1 ? "" : "es"} en ${state.ticket.length} producto${state.ticket.length === 1 ? "" : "s"}`;
 }
 
 async function loadVentas() {
@@ -285,9 +326,11 @@ document.addEventListener("click", async (ev) => {
   }
   if (ev.target.dataset.editCliente) fillForm("#cliente-form", (await api("/api/clientes")).find((c) => String(c.id) === ev.target.dataset.editCliente));
   if (ev.target.dataset.cuenta) await loadCuenta(ev.target.dataset.cuenta);
-  if (ev.target.dataset.remove) {
-    state.ticket = state.ticket.filter((item) => String(item.producto_id) !== ev.target.dataset.remove);
+  if (ev.target.dataset.removeIndex !== undefined) {
+    const index = Number(ev.target.dataset.removeIndex);
+    state.ticket.splice(index, 1);
     renderTicket();
+    $("#venta-cantidad").focus();
   }
   if (ev.target.dataset.selectProduct) {
     const product = state.productos.find((p) => String(p.id) === String(ev.target.dataset.selectProduct));
@@ -310,12 +353,42 @@ $("#producto-modal").addEventListener("click", (ev) => {
 });
 document.addEventListener("keydown", (ev) => {
   if (state.current !== "ventas") return;
+
+  const modalAbierto = !$("#producto-modal").hidden;
+
   if (ev.key === "F3") {
     ev.preventDefault();
     openProductSearch();
+    return;
   }
-  if (ev.key === "Escape" && !$("#producto-modal").hidden) {
+
+  if (ev.key === "Escape" && modalAbierto) {
+    ev.preventDefault();
     closeProductSearch();
+    return;
+  }
+
+  if (ev.key === "Enter" && modalAbierto) {
+    ev.preventDefault();
+    const primerBoton = $("#producto-modal-table [data-select-product]");
+    if (primerBoton) primerBoton.click();
+    return;
+  }
+
+  if (ev.key === "F4" && !modalAbierto) {
+    ev.preventDefault();
+    $("#venta-form").requestSubmit();
+    return;
+  }
+
+  if (ev.key === "Delete" && !modalAbierto) {
+    const seleccionada = $("#ticket tbody tr.ticket-selected");
+    if (seleccionada) {
+      ev.preventDefault();
+      const index = Number(seleccionada.dataset.ticketIndex);
+      state.ticket.splice(index, 1);
+      renderTicket();
+    }
   }
 });
 
@@ -349,28 +422,131 @@ $("#print-cuenta").onclick = () => {
   printWindow(`Cuenta corriente - ${d.cliente.nombre}`, `<p>Cliente: ${escapeHtml(d.cliente.nombre)}</p><div class="total">Saldo ${money(d.cliente.saldo)}</div><table><thead><tr><th>Fecha</th><th>Comp.</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table>`);
 };
 
-$("#add-item").onclick = () => {
+function agregarProductoAlTicket() {
   const p = currentProduct();
-  if (!p) return;
+  if (!p) {
+    alert("Seleccione un producto con F3.");
+    openProductSearch();
+    return;
+  }
+
   const cantidad = Number($("#venta-cantidad").value || 1);
-  if (cantidad <= 0) return alert("Cantidad invalida.");
+  if (!Number.isFinite(cantidad) || cantidad <= 0) {
+    alert("Cantidad inválida.");
+    $("#venta-cantidad").focus();
+    return;
+  }
+
   const yaCargado = state.ticket
     .filter((i) => String(i.producto_id) === String(p.id))
     .reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+
   if (yaCargado + cantidad > Number(p.stock || 0)) {
-    return alert(`Stock insuficiente. Disponible: ${p.stock}`);
+    alert(`Stock insuficiente. Disponible: ${p.stock}`);
+    $("#venta-cantidad").focus();
+    return;
   }
+
   const found = state.ticket.find((i) => String(i.producto_id) === String(p.id));
+
   if (found) {
-    found.cantidad += cantidad;
+    found.cantidad = Number(found.cantidad) + cantidad;
     found.subtotal = found.cantidad * found.precio;
   } else {
-    state.ticket.push({ producto_id: p.id, nombre: p.nombre, cantidad, precio: Number(p.precio_venta || 0), subtotal: cantidad * Number(p.precio_venta || 0) });
+    state.ticket.push({
+      producto_id: p.id,
+      nombre: p.nombre,
+      cantidad,
+      precio: Number(p.precio_venta || 0),
+      subtotal: cantidad * Number(p.precio_venta || 0),
+    });
   }
+
   $("#venta-cantidad").value = 1;
-  $("#venta-cantidad").focus();
   renderTicket();
+
+  // Flujo rápido: después de agregar vuelve a abrir el F3 para buscar el próximo.
+  openProductSearch();
+}
+
+$("#add-item").onclick = agregarProductoAlTicket;
+
+$("#venta-cantidad").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    agregarProductoAlTicket();
+  }
+});
+
+$("#vaciar-ticket").onclick = () => {
+  if (!state.ticket.length) return;
+  if (!confirm("¿Vaciar todos los productos del ticket?")) return;
+  state.ticket = [];
+  renderTicket();
+  $("#venta-cantidad").value = 1;
+  openProductSearch();
 };
+
+$("#ticket").addEventListener("click", (ev) => {
+  const fila = ev.target.closest("tr[data-ticket-index]");
+  if (!fila) return;
+  $$("#ticket tbody tr").forEach((tr) => tr.classList.remove("ticket-selected"));
+  fila.classList.add("ticket-selected");
+});
+
+$("#ticket").addEventListener("change", (ev) => {
+  if (!ev.target.matches("[data-ticket-qty]")) return;
+
+  const index = Number(ev.target.dataset.ticketQty);
+  const item = state.ticket[index];
+  const cantidad = Number(ev.target.value);
+
+  if (!item || !Number.isFinite(cantidad) || cantidad <= 0) {
+    alert("Cantidad inválida.");
+    renderTicket();
+    return;
+  }
+
+  const producto = state.productos.find((p) => String(p.id) === String(item.producto_id));
+  if (producto && cantidad > Number(producto.stock || 0)) {
+    alert(`Stock insuficiente. Disponible: ${producto.stock}`);
+    renderTicket();
+    return;
+  }
+
+  item.cantidad = cantidad;
+  item.subtotal = cantidad * item.precio;
+  renderTicket();
+});
+
+$("#ticket").addEventListener("dblclick", (ev) => {
+  const fila = ev.target.closest("tr[data-ticket-index]");
+  if (!fila || ev.target.matches("button, input")) return;
+
+  const index = Number(fila.dataset.ticketIndex);
+  const item = state.ticket[index];
+  if (!item) return;
+
+  const valor = prompt(`Nueva cantidad para ${item.nombre}:`, item.cantidad);
+  if (valor === null) return;
+
+  const cantidad = Number(valor);
+  const producto = state.productos.find((p) => String(p.id) === String(item.producto_id));
+
+  if (!Number.isFinite(cantidad) || cantidad <= 0) {
+    alert("Cantidad inválida.");
+    return;
+  }
+
+  if (producto && cantidad > Number(producto.stock || 0)) {
+    alert(`Stock insuficiente. Disponible: ${producto.stock}`);
+    return;
+  }
+
+  item.cantidad = cantidad;
+  item.subtotal = cantidad * item.precio;
+  renderTicket();
+});
 
 function ventaDesdeTicket() {
   const form = $("#venta-form");
@@ -403,6 +579,8 @@ $("#venta-form").onsubmit = async (ev) => {
   await loadVentas();
   await loadDashboard();
   alert(`Venta registrada Nro ${result.venta_id}`);
+  $("#venta-cantidad").value = 1;
+  openProductSearch();
 };
 
 $("#abrir-caja-form").onsubmit = async (ev) => {

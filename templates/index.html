@@ -993,6 +993,21 @@
       <table id="producto-modal-table"></table>
     </div>
   </div>
+  <script>
+    (() => {
+      const clave = "bebidas_sesion_pagina_abierta";
+      const ingresoNuevo = {{ fresh_login|tojson }};
+
+      if (ingresoNuevo) {
+        sessionStorage.setItem(clave, "1");
+        return;
+      }
+
+      if (sessionStorage.getItem(clave) !== "1") {
+        window.location.replace("{{ url_for('logout') }}");
+      }
+    })();
+  </script>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

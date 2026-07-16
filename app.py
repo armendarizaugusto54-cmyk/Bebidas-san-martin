@@ -284,7 +284,7 @@ def options():
     return jsonify(
         {
             "categorias": rows("SELECT * FROM categorias ORDER BY nombre"),
-            "clientes": rows("SELECT id,nombre,saldo FROM clientes WHERE activo=1 ORDER BY nombre"),
+            "clientes": rows("SELECT id,nombre,saldo,limite_credito FROM clientes WHERE activo=1 ORDER BY nombre"),
             "productos": rows(
                 """
                 SELECT p.*, c.nombre categoria, COALESCE(c.ganancia,0) ganancia_categoria
@@ -557,44 +557,94 @@ def delete_categoria(categoria_id):
 def clientes():
     if not can("Clientes"):
         return forbidden()
-    return jsonify(rows("SELECT * FROM clientes WHERE activo=1 ORDER BY nombre"))
+
+    return jsonify(rows(
+        """
+        SELECT c.*,
+               COALESCE((SELECT COUNT(*) FROM ventas v WHERE v.cliente_id=c.id),0) compras,
+               CASE
+                   WHEN COALESCE(c.limite_credito,0) <= 0 THEN 0
+                   ELSE MAX(COALESCE(c.limite_credito,0) - COALESCE(c.saldo,0), 0)
+               END credito_disponible
+        FROM clientes c
+        WHERE c.activo=1
+        ORDER BY c.nombre
+        """
+    ))
 
 
 @app.post("/api/clientes")
 def save_cliente():
     if not can("Clientes", "agregar"):
         return forbidden()
+
     data = request.json or {}
+    cliente_id = data.get("id")
     nombre = data.get("nombre", "").strip()
+    cuit = data.get("cuit", "").strip()
+    limite_credito = money(data.get("limite_credito"))
+
     if not nombre:
-        return jsonify({"error": "Nombre obligatorio."}), 400
+        return jsonify({"error": "El nombre es obligatorio."}), 400
+    if limite_credito < 0:
+        return jsonify({"error": "El límite de crédito no puede ser negativo."}), 400
+
     params = (
         nombre,
         data.get("telefono", "").strip(),
         data.get("whatsapp", "").strip(),
         data.get("direccion", "").strip(),
         data.get("localidad", "").strip(),
-        data.get("cuit", "").strip(),
+        cuit,
         data.get("email", "").strip(),
-        money(data.get("limite_credito")),
+        limite_credito,
     )
-    if data.get("id"):
+
+    if cuit:
+        duplicado = one(
+            "SELECT id FROM clientes WHERE cuit=? AND activo=1 AND id<>COALESCE(?,0)",
+            (cuit, cliente_id),
+        )
+        if duplicado:
+            return jsonify({"error": "Ya existe un cliente activo con ese CUIT/DNI."}), 400
+
+    if cliente_id:
         execute(
             """
             UPDATE clientes
             SET nombre=?,telefono=?,whatsapp=?,direccion=?,localidad=?,cuit=?,email=?,limite_credito=?
             WHERE id=?
             """,
-            params + (data["id"],),
+            params + (cliente_id,),
         )
+        audit("cliente_editado", nombre)
     else:
-        execute(
+        cliente_id = execute(
             """
             INSERT INTO clientes(nombre,telefono,whatsapp,direccion,localidad,cuit,email,limite_credito,saldo,activo)
             VALUES(?,?,?,?,?,?,?,?,0,1)
             """,
             params,
         )
+        audit("cliente_creado", nombre)
+
+    return jsonify({"ok": True, "id": cliente_id})
+
+
+@app.delete("/api/clientes/<int:cliente_id>")
+def delete_cliente(cliente_id):
+    if not can("Clientes", "eliminar"):
+        return forbidden()
+
+    cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
+    if not cliente:
+        return jsonify({"error": "Cliente inexistente."}), 404
+
+    if abs(money(cliente["saldo"])) > 0.009:
+        return jsonify({"error": "No se puede dar de baja un cliente con saldo pendiente."}), 400
+
+    execute("UPDATE clientes SET activo=0 WHERE id=?", (cliente_id,))
+    audit("cliente_baja", cliente["nombre"])
     return jsonify({"ok": True})
 
 
@@ -603,33 +653,159 @@ def cuenta(cliente_id):
     cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
     if not cliente:
         return jsonify({"error": "Cliente inexistente."}), 404
-    movs = rows("SELECT * FROM cuenta_corriente WHERE cliente_id=? ORDER BY id DESC", (cliente_id,))
-    resumen = one("SELECT COALESCE(SUM(debe),0) debe, COALESCE(SUM(haber),0) haber, COUNT(*) movimientos FROM cuenta_corriente WHERE cliente_id=?", (cliente_id,))
-    return jsonify({"cliente": cliente, "movimientos": movs, "resumen": resumen})
+
+    desde = request.args.get("desde", "").strip()
+    hasta = request.args.get("hasta", "").strip()
+
+    filtros = ["cliente_id=?"]
+    params = [cliente_id]
+
+    if desde:
+        filtros.append("date(fecha)>=date(?)")
+        params.append(desde)
+    if hasta:
+        filtros.append("date(fecha)<=date(?)")
+        params.append(hasta)
+
+    where = " AND ".join(filtros)
+
+    movimientos = rows(
+        f"""
+        SELECT *
+        FROM cuenta_corriente
+        WHERE {where}
+        ORDER BY datetime(fecha) DESC, id DESC
+        """,
+        params,
+    )
+
+    resumen_total = one(
+        """
+        SELECT COALESCE(SUM(debe),0) debe,
+               COALESCE(SUM(haber),0) haber,
+               COUNT(*) movimientos
+        FROM cuenta_corriente
+        WHERE cliente_id=?
+        """,
+        (cliente_id,),
+    )
+
+    ventas_cliente = rows(
+        """
+        SELECT id,fecha,tipo,total,usuario
+        FROM ventas
+        WHERE cliente_id=?
+        ORDER BY datetime(fecha) DESC, id DESC
+        LIMIT 100
+        """,
+        (cliente_id,),
+    )
+
+    limite = money(cliente["limite_credito"])
+    saldo = money(cliente["saldo"])
+    disponible = max(limite - saldo, 0) if limite > 0 else 0
+
+    return jsonify({
+        "cliente": cliente,
+        "movimientos": movimientos,
+        "resumen": resumen_total,
+        "ventas": ventas_cliente,
+        "credito_disponible": disponible,
+        "filtros": {"desde": desde, "hasta": hasta},
+    })
 
 
 @app.post("/api/clientes/<int:cliente_id>/pago")
 def pago_cliente(cliente_id):
     if not can("Clientes", "agregar"):
         return forbidden()
+
     data = request.json or {}
     importe = money(data.get("importe"))
+
     if importe <= 0:
-        return jsonify({"error": "Importe invalido."}), 400
-    cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
-    saldo = money(cliente["saldo"]) - importe
+        return jsonify({"error": "El importe debe ser mayor a cero."}), 400
+
+    cliente = one("SELECT * FROM clientes WHERE id=? AND activo=1", (cliente_id,))
+    if not cliente:
+        return jsonify({"error": "Cliente inexistente."}), 404
+
+    saldo_actual = money(cliente["saldo"])
+    saldo_nuevo = round(saldo_actual - importe, 2)
+
     with db() as conn:
-        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo, cliente_id))
+        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo_nuevo, cliente_id))
         conn.execute(
             """
-            INSERT INTO cuenta_corriente(cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+            INSERT INTO cuenta_corriente
+            (cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
             VALUES(?,?,?,?,?,?,?,?)
             """,
-            (cliente_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), data.get("comprobante", ""), "PAGO", 0, importe, saldo, data.get("observaciones", "")),
+            (
+                cliente_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                data.get("comprobante", "").strip(),
+                "PAGO",
+                0,
+                importe,
+                saldo_nuevo,
+                data.get("observaciones", "").strip(),
+            ),
         )
         conn.commit()
-    audit("pago_cuenta_corriente", f"{cliente['nombre']} {importe}")
-    return jsonify({"ok": True, "saldo": saldo})
+
+    audit("pago_cuenta_corriente", f"{cliente['nombre']} - {importe}")
+    return jsonify({"ok": True, "saldo": saldo_nuevo})
+
+
+@app.post("/api/clientes/<int:cliente_id>/ajuste")
+def ajuste_cliente(cliente_id):
+    if not can("Clientes", "agregar"):
+        return forbidden()
+
+    data = request.json or {}
+    tipo = data.get("tipo", "DEBE").upper()
+    importe = money(data.get("importe"))
+    concepto = data.get("concepto", "").strip()
+
+    if tipo not in {"DEBE", "HABER"}:
+        return jsonify({"error": "Tipo de ajuste inválido."}), 400
+    if importe <= 0:
+        return jsonify({"error": "El importe debe ser mayor a cero."}), 400
+    if not concepto:
+        return jsonify({"error": "Ingrese un concepto."}), 400
+
+    cliente = one("SELECT * FROM clientes WHERE id=? AND activo=1", (cliente_id,))
+    if not cliente:
+        return jsonify({"error": "Cliente inexistente."}), 404
+
+    debe = importe if tipo == "DEBE" else 0
+    haber = importe if tipo == "HABER" else 0
+    saldo_nuevo = round(money(cliente["saldo"]) + debe - haber, 2)
+
+    with db() as conn:
+        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo_nuevo, cliente_id))
+        conn.execute(
+            """
+            INSERT INTO cuenta_corriente
+            (cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                cliente_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "",
+                concepto,
+                debe,
+                haber,
+                saldo_nuevo,
+                data.get("observaciones", "").strip(),
+            ),
+        )
+        conn.commit()
+
+    audit("ajuste_cuenta_corriente", f"{cliente['nombre']} - {tipo} {importe}")
+    return jsonify({"ok": True, "saldo": saldo_nuevo})
 
 
 def caja_actual():
@@ -660,6 +836,24 @@ def save_venta():
     total = sum(money(i.get("subtotal")) for i in items)
     cliente_id = data.get("cliente_id") or None
     tipo = data.get("tipo", "EFECTIVO")
+
+    if tipo == "CUENTA CORRIENTE":
+        if not cliente_id:
+            return jsonify({"error": "Seleccione un cliente para vender a cuenta corriente."}), 400
+
+        cliente = one("SELECT * FROM clientes WHERE id=? AND activo=1", (cliente_id,))
+        if not cliente:
+            return jsonify({"error": "Cliente inexistente."}), 404
+
+        limite = money(cliente["limite_credito"])
+        saldo_proyectado = money(cliente["saldo"]) + total
+
+        if limite > 0 and saldo_proyectado > limite:
+            disponible = max(limite - money(cliente["saldo"]), 0)
+            return jsonify({
+                "error": f"El cliente supera su límite de crédito. Disponible: ${disponible:.2f}"
+            }), 400
+
     with db() as conn:
         try:
             conn.execute("BEGIN")

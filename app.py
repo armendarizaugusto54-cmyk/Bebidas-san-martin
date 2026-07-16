@@ -932,6 +932,91 @@ def caja_movimiento():
     return jsonify({"ok": True})
 
 
+@app.post("/api/caja/forzar-cierre")
+def forzar_cierre_caja():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+
+    caja = caja_actual()
+    if not caja:
+        return jsonify({"error": "No hay ninguna caja abierta para forzar el cierre."}), 400
+
+    data = request.json or {}
+    motivo = data.get("motivo", "").strip()
+
+    if not motivo:
+        return jsonify({"error": "Debe ingresar el motivo del cierre forzado."}), 400
+
+    sistema = sistema_caja(caja)
+    total_sistema = round(sum(sistema.values()), 2)
+    ahora = datetime.now()
+
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE caja
+            SET estado='CERRADA',
+                cierre=?,
+                diferencia=0,
+                usuario_cierre=?,
+                hora_cierre=?
+            WHERE id=?
+            """,
+            (
+                total_sistema,
+                session["user"]["usuario"],
+                ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                caja["id"],
+            ),
+        )
+
+        conn.execute(
+            """
+            INSERT INTO caja_arqueos
+            (
+                caja_id,fecha,usuario,
+                efectivo_sistema,efectivo_contado,
+                transferencia_sistema,transferencia_contado,
+                debito_sistema,debito_contado,
+                credito_sistema,credito_contado,
+                posnet_sistema,posnet_contado,
+                cuenta_corriente_sistema,cuenta_corriente_contado,
+                total_sistema,total_contado,diferencia,observaciones,
+                corregido,usuario_correccion,motivo_correccion
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                caja["id"],
+                ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                session["user"]["usuario"],
+                sistema["efectivo"], sistema["efectivo"],
+                sistema["transferencia"], sistema["transferencia"],
+                sistema["debito"], sistema["debito"],
+                sistema["credito"], sistema["credito"],
+                sistema["posnet"], sistema["posnet"],
+                sistema["cuenta_corriente"], sistema["cuenta_corriente"],
+                total_sistema, total_sistema, 0,
+                f"CIERRE FORZADO: {motivo}",
+                1,
+                session["user"]["usuario"],
+                motivo,
+            ),
+        )
+        conn.commit()
+
+    audit(
+        "caja_cierre_forzado",
+        f"Caja {caja['id']} - usuario {session['user']['usuario']} - motivo: {motivo}",
+    )
+
+    return jsonify({
+        "ok": True,
+        "caja_id": caja["id"],
+        "total": total_sistema,
+    })
+
+
 @app.post("/api/caja/cerrar")
 def cerrar_caja():
     caja = caja_actual()

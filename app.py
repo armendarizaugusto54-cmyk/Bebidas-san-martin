@@ -867,22 +867,197 @@ def cerrar_caja():
     caja = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
     if not caja:
         return jsonify({"error": "No hay caja abierta."}), 400
-    teorico = (
-        money(caja.get("apertura"))
+    sistema = {
+        "efectivo": money(caja.get("apertura"))
         + money(caja.get("efectivo"))
-        + money(caja.get("transferencia"))
-        + money(caja.get("debito"))
-        + money(caja.get("credito"))
-        + money(caja.get("posnet"))
         + money(caja.get("ingresos"))
-        - money(caja.get("gastos"))
-    )
-    cierre = money(data.get("cierre"))
+        - money(caja.get("gastos")),
+        "transferencia": money(caja.get("transferencia")),
+        "debito": money(caja.get("debito")),
+        "credito": money(caja.get("credito")),
+        "posnet": money(caja.get("posnet")),
+    }
+    contado = {
+        "efectivo": money(data.get("efectivo_contado", data.get("cierre"))),
+        "transferencia": money(data.get("transferencia_contado")),
+        "debito": money(data.get("debito_contado")),
+        "credito": money(data.get("credito_contado")),
+        "posnet": money(data.get("posnet_contado")),
+    }
+    teorico = sum(sistema.values())
+    cierre = sum(contado.values())
+    diferencia = cierre - teorico
+    observaciones = data.get("observaciones", "").strip()
     execute(
         "UPDATE caja SET cierre=?, diferencia=?, estado='CERRADA' WHERE id=?",
-        (cierre, cierre - teorico, caja["id"]),
+        (cierre, diferencia, caja["id"]),
     )
-    return jsonify({"ok": True})
+    execute(
+        """
+        INSERT INTO arqueo_caja
+        (fecha,usuario,apertura,efectivo_sistema,efectivo_contado,
+         diferencia_efectivo,posnet_sistema,posnet_contado,diferencia_posnet,
+         observaciones,estado,caja_id)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            session["user"]["usuario"],
+            money(caja.get("apertura")),
+            sistema["efectivo"],
+            contado["efectivo"],
+            contado["efectivo"] - sistema["efectivo"],
+            sistema["posnet"],
+            contado["posnet"],
+            contado["posnet"] - sistema["posnet"],
+            (
+                f"{observaciones} | "
+                f"Transferencia sis/cont/dif: {sistema['transferencia']}/{contado['transferencia']}/{contado['transferencia'] - sistema['transferencia']}; "
+                f"Debito sis/cont/dif: {sistema['debito']}/{contado['debito']}/{contado['debito'] - sistema['debito']}; "
+                f"Credito sis/cont/dif: {sistema['credito']}/{contado['credito']}/{contado['credito'] - sistema['credito']}; "
+                f"Total sis/cont/dif: {teorico}/{cierre}/{diferencia}"
+            ).strip(),
+            "CERRADA",
+            caja["id"],
+        ),
+    )
+    return jsonify({"ok": True, "sistema": teorico, "contado": cierre, "diferencia": diferencia})
+
+
+def caja_sistema_por_medio(caja):
+    return {
+        "efectivo": money(caja.get("apertura"))
+        + money(caja.get("efectivo"))
+        + money(caja.get("ingresos"))
+        - money(caja.get("gastos")),
+        "transferencia": money(caja.get("transferencia")),
+        "debito": money(caja.get("debito")),
+        "credito": money(caja.get("credito")),
+        "posnet": money(caja.get("posnet")),
+    }
+
+
+@app.get("/api/caja/ultimo-arqueo")
+def ultimo_arqueo():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+    caja = one("SELECT * FROM caja WHERE estado='CERRADA' ORDER BY id DESC LIMIT 1")
+    if not caja:
+        return jsonify({})
+    arqueo = one(
+        "SELECT * FROM arqueo_caja WHERE caja_id=? ORDER BY id DESC LIMIT 1",
+        (caja["id"],),
+    )
+    sistema = caja_sistema_por_medio(caja)
+    contado = {
+        "efectivo": money(arqueo.get("efectivo_contado")) if arqueo else money(caja.get("cierre")),
+        "transferencia": 0,
+        "debito": 0,
+        "credito": 0,
+        "posnet": money(arqueo.get("posnet_contado")) if arqueo else 0,
+    }
+    if arqueo and arqueo.get("observaciones"):
+        # Los medios no contemplados por columnas propias se guardan en observaciones;
+        # para corregir se cargan de nuevo desde cero.
+        contado["transferencia"] = sistema["transferencia"]
+        contado["debito"] = sistema["debito"]
+        contado["credito"] = sistema["credito"]
+    return jsonify({"caja": caja, "arqueo": arqueo or {}, "sistema": sistema, "contado": contado})
+
+
+@app.post("/api/caja/corregir-arqueo")
+def corregir_arqueo():
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+    data = request.json or {}
+    caja_id = data.get("caja_id")
+    arqueo_id = data.get("arqueo_id")
+    motivo = data.get("motivo", "").strip()
+    if not caja_id or not motivo:
+        return jsonify({"error": "Caja y motivo son obligatorios."}), 400
+    caja = one("SELECT * FROM caja WHERE id=? AND estado='CERRADA'", (caja_id,))
+    if not caja:
+        return jsonify({"error": "Caja cerrada inexistente."}), 404
+    sistema = caja_sistema_por_medio(caja)
+    contado = {
+        "efectivo": money(data.get("efectivo_contado")),
+        "transferencia": money(data.get("transferencia_contado")),
+        "debito": money(data.get("debito_contado")),
+        "credito": money(data.get("credito_contado")),
+        "posnet": money(data.get("posnet_contado")),
+    }
+    total_sistema = sum(sistema.values())
+    total_contado = sum(contado.values())
+    diferencia = total_contado - total_sistema
+    execute(
+        "UPDATE caja SET cierre=?, diferencia=? WHERE id=?",
+        (total_contado, diferencia, caja_id),
+    )
+    obs = (
+        f"CORRECCION: {motivo} | "
+        f"Efectivo sis/cont/dif: {sistema['efectivo']}/{contado['efectivo']}/{contado['efectivo'] - sistema['efectivo']}; "
+        f"Transferencia sis/cont/dif: {sistema['transferencia']}/{contado['transferencia']}/{contado['transferencia'] - sistema['transferencia']}; "
+        f"Debito sis/cont/dif: {sistema['debito']}/{contado['debito']}/{contado['debito'] - sistema['debito']}; "
+        f"Credito sis/cont/dif: {sistema['credito']}/{contado['credito']}/{contado['credito'] - sistema['credito']}; "
+        f"Posnet sis/cont/dif: {sistema['posnet']}/{contado['posnet']}/{contado['posnet'] - sistema['posnet']}; "
+        f"Total sis/cont/dif: {total_sistema}/{total_contado}/{diferencia}"
+    )
+    if arqueo_id:
+        execute(
+            """
+            UPDATE arqueo_caja
+            SET efectivo_sistema=?, efectivo_contado=?, diferencia_efectivo=?,
+                posnet_sistema=?, posnet_contado=?, diferencia_posnet=?,
+                observaciones=?, corregido=1, usuario_correccion=?,
+                fecha_correccion=?, motivo_correccion=?, motivo=?
+            WHERE id=?
+            """,
+            (
+                sistema["efectivo"],
+                contado["efectivo"],
+                contado["efectivo"] - sistema["efectivo"],
+                sistema["posnet"],
+                contado["posnet"],
+                contado["posnet"] - sistema["posnet"],
+                obs,
+                session["user"]["usuario"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                motivo,
+                motivo,
+                arqueo_id,
+            ),
+        )
+    else:
+        execute(
+            """
+            INSERT INTO arqueo_caja
+            (fecha,usuario,apertura,efectivo_sistema,efectivo_contado,
+             diferencia_efectivo,posnet_sistema,posnet_contado,diferencia_posnet,
+             observaciones,estado,caja_id,corregido,usuario_correccion,
+             fecha_correccion,motivo_correccion,motivo)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                session["user"]["usuario"],
+                money(caja.get("apertura")),
+                sistema["efectivo"],
+                contado["efectivo"],
+                contado["efectivo"] - sistema["efectivo"],
+                sistema["posnet"],
+                contado["posnet"],
+                contado["posnet"] - sistema["posnet"],
+                obs,
+                "CERRADA",
+                caja_id,
+                1,
+                session["user"]["usuario"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                motivo,
+                motivo,
+            ),
+        )
+    return jsonify({"ok": True, "sistema": total_sistema, "contado": total_contado, "diferencia": diferencia})
 
 
 @app.post("/api/backup")

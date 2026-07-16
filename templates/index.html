@@ -124,7 +124,7 @@
         <article><span>Entradas</span><strong id="caja-entradas">$0</strong></article>
         <article><span>Total teorico</span><strong id="caja-total">$0</strong></article>
       </div>
-      <div class="split">
+      <div class="split caja-layout">
         <form id="caja-form" class="panel">
           <h2>Abrir caja</h2>
           <label>Monto inicial<input name="apertura" type="number" step="0.01" value="0"></label>
@@ -137,13 +137,53 @@
           <label>Importe<input name="importe" type="number" step="0.01" required></label>
           <button>Registrar</button>
         </form>
-        <form id="cierre-form" class="panel">
-          <h2>Cerrar caja</h2>
-          <label>Efectivo contado<input name="cierre" type="number" step="0.01" required></label>
+        <form id="cierre-form" class="panel arqueo-panel">
+          <h2>Arqueo y cierre</h2>
+          <div class="arqueo-grid">
+            <div class="arqueo-head">Medio</div>
+            <div class="arqueo-head">Sistema</div>
+            <div class="arqueo-head">Contado</div>
+            <div class="arqueo-head">Dif.</div>
+            <label>Efectivo</label><strong id="sis-efectivo">$0</strong><input name="efectivo_contado" type="number" step="0.01" value="0"><span id="dif-efectivo">$0</span>
+            <label>Transferencia</label><strong id="sis-transferencia">$0</strong><input name="transferencia_contado" type="number" step="0.01" value="0"><span id="dif-transferencia">$0</span>
+            <label>Debito</label><strong id="sis-debito">$0</strong><input name="debito_contado" type="number" step="0.01" value="0"><span id="dif-debito">$0</span>
+            <label>Credito</label><strong id="sis-credito">$0</strong><input name="credito_contado" type="number" step="0.01" value="0"><span id="dif-credito">$0</span>
+            <label>Posnet</label><strong id="sis-posnet">$0</strong><input name="posnet_contado" type="number" step="0.01" value="0"><span id="dif-posnet">$0</span>
+          </div>
+          <div class="arqueo-total">
+            <span>Total sistema: <strong id="arqueo-sistema">$0</strong></span>
+            <span>Total contado: <strong id="arqueo-contado">$0</strong></span>
+            <span>Diferencia: <strong id="arqueo-diferencia">$0</strong></span>
+          </div>
+          <label>Observaciones<input name="observaciones" placeholder="Opcional"></label>
           <button>Cerrar</button>
         </form>
       </div>
       <div class="panel"><table id="tabla-caja"></table></div>
+      <form id="corregir-arqueo-form" class="panel admin-correction" hidden>
+        <h2>Correccion administrativa del ultimo cierre</h2>
+        <p class="muted">Solo administrador. Usar cuando se cargo mal un conteo al cerrar caja.</p>
+        <input type="hidden" name="caja_id">
+        <input type="hidden" name="arqueo_id">
+        <div class="arqueo-grid">
+          <div class="arqueo-head">Medio</div>
+          <div class="arqueo-head">Sistema</div>
+          <div class="arqueo-head">Nuevo contado</div>
+          <div class="arqueo-head">Nueva dif.</div>
+          <label>Efectivo</label><strong id="corr-sis-efectivo">$0</strong><input name="efectivo_contado" type="number" step="0.01" value="0"><span id="corr-dif-efectivo">$0</span>
+          <label>Transferencia</label><strong id="corr-sis-transferencia">$0</strong><input name="transferencia_contado" type="number" step="0.01" value="0"><span id="corr-dif-transferencia">$0</span>
+          <label>Debito</label><strong id="corr-sis-debito">$0</strong><input name="debito_contado" type="number" step="0.01" value="0"><span id="corr-dif-debito">$0</span>
+          <label>Credito</label><strong id="corr-sis-credito">$0</strong><input name="credito_contado" type="number" step="0.01" value="0"><span id="corr-dif-credito">$0</span>
+          <label>Posnet</label><strong id="corr-sis-posnet">$0</strong><input name="posnet_contado" type="number" step="0.01" value="0"><span id="corr-dif-posnet">$0</span>
+        </div>
+        <div class="arqueo-total">
+          <span>Total sistema: <strong id="corr-sistema">$0</strong></span>
+          <span>Total contado: <strong id="corr-contado">$0</strong></span>
+          <span>Diferencia: <strong id="corr-diferencia">$0</strong></span>
+        </div>
+        <label>Motivo de correccion<input name="motivo" required placeholder="Ej: se cargo mal el posnet"></label>
+        <button class="danger">Guardar correccion</button>
+      </form>
     </section>
 
     <section id="categorias" class="view simple" data-kind="categorias"></section>

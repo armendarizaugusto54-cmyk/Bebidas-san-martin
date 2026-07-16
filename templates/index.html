@@ -38,15 +38,37 @@
     </section>
 
     <section id="ventas" class="view">
+      <div class="sale-head">
+        <div>
+          <h2>Ventas</h2>
+          <p class="muted">Busca productos con F3, arma el ticket y emite presupuesto, remito o venta.</p>
+        </div>
+        <div class="sale-head-total">
+          <span>Total actual</span>
+          <strong id="venta-total-top">$0.00</strong>
+        </div>
+      </div>
       <div class="split sale-layout">
         <form id="venta-form" class="panel">
           <h2>Nueva venta</h2>
           <label>Cliente<select name="cliente_id"></select></label>
           <label>Medio<select name="tipo"><option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option><option>CREDITO</option><option>POSNET</option><option>CUENTA CORRIENTE</option></select></label>
-          <label>Producto<select id="venta-producto"></select></label>
+          <label>Producto
+            <select id="venta-producto" hidden></select>
+            <div class="product-picker">
+              <input id="venta-producto-nombre" readonly placeholder="Buscar producto con F3 o boton Buscar">
+              <button type="button" class="secondary" id="buscar-producto">Buscar</button>
+            </div>
+          </label>
           <label>Cantidad<input id="venta-cantidad" type="number" value="1" min="1" step="1"></label>
+          <div class="sale-summary">
+            <span id="ticket-items">0 productos</span>
+            <strong id="ticket-total-inline">$0.00</strong>
+          </div>
           <div class="actions">
             <button type="button" id="add-item">Agregar</button>
+          </div>
+          <div class="actions doc-actions">
             <button type="button" class="secondary" id="print-presupuesto">Presupuesto</button>
             <button type="button" class="secondary" id="print-remito">Remito</button>
           </div>
@@ -138,6 +160,19 @@
       <div class="panel" id="auditoria-box"><h2>Auditoria</h2><table id="tabla-auditoria"></table></div>
     </section>
   </main>
+  <div id="producto-modal" class="modal" hidden>
+    <div class="modal-box">
+      <div class="panel-head">
+        <div>
+          <h2>Buscar producto</h2>
+          <p class="muted">Codigo, nombre, marca o categoria.</p>
+        </div>
+        <button type="button" class="secondary" id="cerrar-producto-modal">Cerrar</button>
+      </div>
+      <input id="producto-modal-search" placeholder="Escribi para buscar">
+      <table id="producto-modal-table"></table>
+    </div>
+  </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

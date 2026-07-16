@@ -3,24 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bebidas San Martin</title>
+  <title>Bebidas San Martin - Login</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body class="login-body">
-  <main class="login-panel">
+  <form class="login-panel" method="post">
     <div class="login-brand">
-      <img src="{{ url_for('static', filename='logo-bebidas.svg') }}" alt="Bebidas San Martin">
+      <div class="logo-mark">BSM</div>
       <div>
         <h1>Bebidas San Martin</h1>
-        <p>Sistema online</p>
+        <p>Sistema de gestion</p>
       </div>
     </div>
     {% if error %}<div class="alert">{{ error }}</div>{% endif %}
-    <form method="post">
-      <label>Usuario<input name="usuario" autocomplete="username" required></label>
-      <label>Contrasena<input name="password" type="password" autocomplete="current-password" required></label>
-      <button type="submit">Ingresar</button>
-    </form>
-  </main>
+    <label>Usuario<input name="usuario" required autocomplete="username"></label>
+    <label>Contrasena<input name="password" type="password" required autocomplete="current-password"></label>
+    <button>Entrar</button>
+  </form>
 </body>
 </html>

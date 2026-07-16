@@ -11,170 +11,99 @@
     <h1>Bebidas<br>San Martin</h1>
     <button data-view="inicio" class="active">Inicio</button>
     <button data-view="ventas">Ventas</button>
-    <button data-view="compras">Compras</button>
     <button data-view="productos">Productos</button>
     <button data-view="clientes">Clientes</button>
     <button data-view="caja">Caja</button>
-    <button data-view="categorias">Categorias</button>
-    <button data-view="marcas">Marcas</button>
-    <button data-view="proveedores">Proveedores</button>
     <button data-view="reportes">Reportes</button>
-    <button data-view="configuracion">Herramientas</button>
-    <button data-view="usuarios">Usuarios</button>
+    <button data-view="herramientas">Herramientas</button>
     <a href="{{ url_for('logout') }}">Salir</a>
   </aside>
   <main>
     <header>
-      <div>
-        <strong>Sistema de inventario</strong>
-        <span>{{ user.nombre }} - {{ user.rol }}</span>
-      </div>
+      <div><strong>Sistema de gestion</strong><span>{{ user.nombre }} - {{ user.rol }}</span></div>
       <input id="search" placeholder="Buscar en la vista actual">
     </header>
 
     <section id="inicio" class="view active">
-      <div class="dashboard-head">
-        <div>
-          <h2>Resumen del dia</h2>
-          <p class="muted">Ventas, caja y alertas principales del negocio.</p>
-        </div>
-        <button type="button" class="secondary" data-view-shortcut="reportes">Ver reportes</button>
+      <div class="cards">
+        <article><span>Ventas hoy</span><strong id="dash-ventas">$0</strong><small id="dash-cant">0 operaciones</small></article>
+        <article><span>Productos</span><strong id="dash-productos">0</strong><small>Activos</small></article>
+        <article><span>Clientes</span><strong id="dash-clientes">0</strong><small>Activos</small></article>
+        <article><span>Stock bajo</span><strong id="dash-stock">0</strong><small>Alertas</small></article>
       </div>
-      <div class="cards dashboard-cards">
-        <article><span>Ventas hoy</span><strong id="card-ventas">$0</strong><small id="card-ventas-cantidad">0 operaciones</small></article>
-        <article><span>Ticket promedio</span><strong id="card-ticket">$0</strong><small>Promedio del dia</small></article>
-        <article><span>Caja</span><strong id="card-caja">Cerrada</strong><small id="card-caja-detalle">$0 esperado</small></article>
-        <article><span>Stock bajo</span><strong id="card-stock">0</strong><small id="card-productos">0 productos</small></article>
-      </div>
-      <div class="dashboard-grid">
-        <div class="panel dashboard-panel">
-          <h2>Medios de pago hoy</h2>
-          <div id="dashboard-medios" class="payment-list"></div>
-        </div>
-        <div class="panel dashboard-panel">
-          <h2>Ultimo cierre</h2>
-          <div id="dashboard-cierre" class="cash-status"></div>
-        </div>
-      </div>
-      <div class="dashboard-grid wide-left">
-        <div class="panel">
-          <h2>Ultimas ventas</h2>
-          <table id="tabla-ultimas-ventas"></table>
-        </div>
-        <div class="panel">
-          <h2>Top productos hoy</h2>
-          <table id="tabla-top-dashboard"></table>
-        </div>
-      </div>
-      <div class="panel">
-        <h2>Productos con stock bajo</h2>
-        <table id="tabla-bajos"></table>
+      <div class="split">
+        <div class="panel"><h2>Top productos del dia</h2><table id="tabla-dash-top"></table></div>
+        <div class="panel"><h2>Caja actual</h2><div id="dash-caja" class="summary-box"></div></div>
       </div>
     </section>
 
     <section id="ventas" class="view">
       <div class="split sale-layout">
         <form id="venta-form" class="panel">
-          <div class="sale-form-head">
-            <div>
-              <h2>Nueva venta</h2>
-              <p class="muted">Carga productos, arma presupuesto o finaliza la venta.</p>
-            </div>
-            <strong id="venta-total-mini">$0.00</strong>
+          <h2>Nueva venta</h2>
+          <label>Cliente<select name="cliente_id"></select></label>
+          <label>Medio<select name="tipo"><option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option><option>CREDITO</option><option>POSNET</option><option>CUENTA CORRIENTE</option></select></label>
+          <label>Producto<select id="venta-producto"></select></label>
+          <label>Cantidad<input id="venta-cantidad" type="number" value="1" min="1" step="1"></label>
+          <div class="actions">
+            <button type="button" id="add-item">Agregar</button>
+            <button type="button" class="secondary" id="print-presupuesto">Presupuesto</button>
+            <button type="button" class="secondary" id="print-remito">Remito</button>
           </div>
-          <label>Cliente<select name="cliente_id" required></select></label>
-          <label>Tipo<select name="tipo">
-            <option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option>
-            <option>CREDITO</option><option>POSNET</option><option>CUENTA CORRIENTE</option>
-          </select></label>
-          <label>Codigo rapido<input id="venta-codigo" placeholder="Escanear o escribir codigo y Enter"></label>
-          <label>Producto
-            <select id="venta-producto" hidden></select>
-            <div class="product-picker">
-              <input id="venta-producto-nombre" readonly placeholder="Buscar producto: Ctrl+K, / o boton Buscar">
-              <button type="button" id="buscar-producto">Buscar</button>
-            </div>
-          </label>
-          <label>Cantidad<input id="venta-cantidad" type="number" min="1" step="1" value="1"></label>
-          <label>Pago recibido<input id="venta-pago" type="number" min="0" step="0.01" value="0"></label>
-          <div class="sale-summary">
-            <span id="ticket-items">0 items</span>
-            <strong id="ticket-vuelto">Vuelto: $0.00</strong>
-          </div>
-          <div class="sale-actions">
-            <button type="button" class="sale-button add" id="add-item">Agregar producto</button>
-            <button type="button" class="sale-button print" id="print-presupuesto">Presupuesto</button>
-            <button type="button" class="sale-button print" id="print-remito">Remito</button>
-          </div>
-          <div class="sale-actions final">
-            <button type="submit" class="sale-button finish success">Finalizar venta</button>
-            <button type="button" class="sale-button print" id="print-ticket">Ticket ultima venta</button>
-          </div>
+          <button class="success">Finalizar venta</button>
         </form>
-        <div class="panel ticket-panel">
-          <div class="ticket-head">
-            <div>
-              <h2>Detalle</h2>
-              <p class="muted">Productos preparados para vender o presupuestar.</p>
-            </div>
-            <span id="ticket-count-badge">0</span>
-          </div>
+        <div class="panel">
+          <h2>Detalle</h2>
           <table id="ticket"></table>
           <div class="total" id="ticket-total">TOTAL: $0.00</div>
         </div>
       </div>
-      <div class="panel">
-        <h2>Ultimas ventas</h2>
-        <table id="tabla-ventas"></table>
-      </div>
-    </section>
-
-    <section id="compras" class="view">
-      <div class="split">
-        <form id="compra-form" class="panel">
-          <h2>Nueva compra</h2>
-          <label>Proveedor<select name="proveedor_id"></select></label>
-          <label>Producto<select name="producto_id"></select></label>
-          <label>Cantidad<input name="cantidad" type="number" min="0.01" step="0.01" required></label>
-          <label>Precio compra<input name="precio" type="number" min="0" step="0.01" required></label>
-          <label>Factura<input name="factura"></label>
-          <label>Observaciones<input name="observaciones"></label>
-          <button>Registrar compra</button>
-        </form>
-        <div class="panel">
-          <h2>Ultimas compras</h2>
-          <table id="tabla-compras"></table>
-        </div>
-      </div>
+      <div class="panel"><h2>Ultimas ventas</h2><table id="tabla-ventas"></table></div>
     </section>
 
     <section id="productos" class="view">
-      <form id="producto-form" class="panel grid-form"></form>
-      <div class="panel"><table id="tabla-productos"></table></div>
+      <form id="producto-form" class="panel grid-form">
+        <input type="hidden" name="id">
+        <label>Codigo<input name="codigo" required></label>
+        <label>Nombre<input name="nombre" required></label>
+        <label>Categoria<select name="categoria_id"></select></label>
+        <label>Marca<input name="marca"></label>
+        <label>Compra<input name="precio_compra" type="number" step="0.01"></label>
+        <label>Venta<input name="precio_venta" type="number" step="0.01"></label>
+        <label>Stock<input name="stock" type="number" step="0.01"></label>
+        <label>Minimo<input name="stock_minimo" type="number" step="0.01"></label>
+        <button>Guardar producto</button>
+      </form>
+      <div class="panel"><h2>Productos</h2><table id="tabla-productos"></table></div>
     </section>
 
     <section id="clientes" class="view">
-      <form id="cliente-form" class="panel grid-form"></form>
-      <div class="panel"><table id="tabla-clientes"></table></div>
-      <div id="cuenta-panel" class="panel account-panel" hidden>
-        <div class="panel-head">
-          <div>
-            <h2 id="cuenta-titulo">Cuenta corriente</h2>
-            <p id="cuenta-subtitulo" class="muted"></p>
-          </div>
-          <button type="button" id="imprimir-cuenta">Imprimir estado</button>
-        </div>
-        <div class="cash-detail-grid">
-          <article><span>Saldo actual</span><strong id="cuenta-saldo">$0</strong></article>
-          <article><span>Total debe</span><strong id="cuenta-debe">$0</strong></article>
-          <article><span>Total pagos</span><strong id="cuenta-haber">$0</strong></article>
+      <form id="cliente-form" class="panel grid-form">
+        <input type="hidden" name="id">
+        <label>Nombre<input name="nombre" required></label>
+        <label>Telefono<input name="telefono"></label>
+        <label>WhatsApp<input name="whatsapp"></label>
+        <label>Direccion<input name="direccion"></label>
+        <label>Localidad<input name="localidad"></label>
+        <label>CUIT/DNI<input name="cuit"></label>
+        <label>Email<input name="email"></label>
+        <label>Limite credito<input name="limite_credito" type="number" step="0.01"></label>
+        <button>Guardar cliente</button>
+      </form>
+      <div class="panel"><h2>Clientes</h2><table id="tabla-clientes"></table></div>
+      <div id="cuenta-panel" class="panel" hidden>
+        <div class="panel-head"><div><h2 id="cuenta-title">Cuenta corriente</h2><p id="cuenta-sub" class="muted"></p></div><button id="print-cuenta">Imprimir estado</button></div>
+        <div class="cards compact">
+          <article><span>Saldo</span><strong id="cuenta-saldo">$0</strong></article>
+          <article><span>Debe</span><strong id="cuenta-debe">$0</strong></article>
+          <article><span>Haber</span><strong id="cuenta-haber">$0</strong></article>
           <article><span>Movimientos</span><strong id="cuenta-movs">0</strong></article>
         </div>
-        <form id="cuenta-pago-form" class="account-payment-form">
+        <form id="pago-form" class="grid-form">
           <input type="hidden" name="cliente_id">
-          <label>Importe pago<input name="importe" type="number" step="0.01" required></label>
-          <label>Comprobante<input name="comprobante" placeholder="Opcional"></label>
-          <label>Observaciones<input name="observaciones" placeholder="Opcional"></label>
+          <label>Importe<input name="importe" type="number" step="0.01" required></label>
+          <label>Comprobante<input name="comprobante"></label>
+          <label>Observaciones<input name="observaciones"></label>
           <button>Registrar pago</button>
         </form>
         <table id="tabla-cuenta"></table>
@@ -186,233 +115,29 @@
         <article><span>Estado</span><strong id="caja-estado">Cerrada</strong></article>
         <article><span>Apertura</span><strong id="caja-apertura">$0</strong></article>
         <article><span>Entradas</span><strong id="caja-entradas">$0</strong></article>
-        <article><span>Total teorico</span><strong id="caja-total">$0</strong></article>
+        <article><span>Total sistema</span><strong id="caja-total">$0</strong></article>
       </div>
       <div class="split caja-layout">
-        <form id="caja-form" class="panel">
-          <h2>Abrir caja</h2>
-          <label>Monto inicial<input name="apertura" type="number" step="0.01" value="0"></label>
-          <button>Abrir</button>
-        </form>
-        <form id="mov-form" class="panel">
-          <h2>Movimiento</h2>
-          <label>Tipo<select name="tipo"><option value="ingreso">Ingreso</option><option value="gasto">Gasto</option></select></label>
-          <label>Descripcion<input name="descripcion"></label>
-          <label>Importe<input name="importe" type="number" step="0.01" required></label>
-          <button>Registrar</button>
-        </form>
-        <form id="cierre-form" class="panel arqueo-panel">
-          <h2>Arqueo y cierre</h2>
-          <div class="arqueo-grid">
-            <div class="arqueo-head">Medio</div>
-            <div class="arqueo-head">Sistema</div>
-            <div class="arqueo-head">Contado</div>
-            <div class="arqueo-head">Dif.</div>
-            <label>Efectivo</label><strong id="sis-efectivo">$0</strong><input name="efectivo_contado" type="number" step="0.01" value="0"><span id="dif-efectivo">$0</span>
-            <label>Transferencia</label><strong id="sis-transferencia">$0</strong><input name="transferencia_contado" type="number" step="0.01" value="0"><span id="dif-transferencia">$0</span>
-            <label>Debito</label><strong id="sis-debito">$0</strong><input name="debito_contado" type="number" step="0.01" value="0"><span id="dif-debito">$0</span>
-            <label>Credito</label><strong id="sis-credito">$0</strong><input name="credito_contado" type="number" step="0.01" value="0"><span id="dif-credito">$0</span>
-            <label>Posnet</label><strong id="sis-posnet">$0</strong><input name="posnet_contado" type="number" step="0.01" value="0"><span id="dif-posnet">$0</span>
-          </div>
-          <div class="arqueo-total">
-            <span>Total sistema: <strong id="arqueo-sistema">$0</strong></span>
-            <span>Total contado: <strong id="arqueo-contado">$0</strong></span>
-            <span>Diferencia: <strong id="arqueo-diferencia">$0</strong></span>
-          </div>
-          <label>Observaciones<input name="observaciones" placeholder="Opcional"></label>
-          <button>Cerrar</button>
-        </form>
+        <form id="abrir-caja-form" class="panel"><h2>Abrir caja</h2><label>Apertura<input name="apertura" type="number" step="0.01" value="0"></label><button>Abrir</button></form>
+        <form id="mov-caja-form" class="panel"><h2>Movimiento</h2><label>Tipo<select name="tipo"><option value="ingreso">Ingreso</option><option value="gasto">Gasto</option></select></label><label>Descripcion<input name="descripcion"></label><label>Importe<input name="importe" type="number" step="0.01"></label><button>Registrar</button></form>
+        <form id="cerrar-caja-form" class="panel"><h2>Cierre</h2><div id="arqueo-grid" class="arqueo"></div><label>Observaciones<input name="observaciones"></label><button class="danger">Cerrar caja</button></form>
       </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Historial de caja</h2>
-            <p class="muted">Filtra cierres, revisa diferencias e imprime el arqueo.</p>
-          </div>
-          <button type="button" class="secondary" id="limpiar-filtros-caja">Limpiar</button>
-        </div>
-        <div class="caja-filter-row">
-          <input id="caja-buscar" placeholder="Buscar por numero, fecha, usuario o diferencia">
-          <input id="caja-desde" type="date">
-          <input id="caja-hasta" type="date">
-          <select id="caja-estado-filtro">
-            <option value="">Todos</option>
-            <option value="ABIERTA">Abierta</option>
-            <option value="CERRADA">Cerrada</option>
-          </select>
-        </div>
-        <table id="tabla-caja"></table>
-      </div>
-      <div id="detalle-caja-panel" class="panel caja-detail" hidden>
-        <div class="panel-head">
-          <div>
-            <h2 id="detalle-caja-titulo">Detalle de caja</h2>
-            <p id="detalle-caja-subtitulo" class="muted"></p>
-          </div>
-          <button type="button" id="imprimir-detalle-caja">Imprimir arqueo</button>
-        </div>
-        <div class="cash-detail-grid">
-          <article><span>Apertura</span><strong id="detalle-caja-apertura">$0</strong></article>
-          <article><span>Total sistema</span><strong id="detalle-caja-sistema">$0</strong></article>
-          <article><span>Total contado</span><strong id="detalle-caja-contado">$0</strong></article>
-          <article><span>Diferencia</span><strong id="detalle-caja-diferencia">$0</strong></article>
-        </div>
-        <table id="tabla-detalle-caja"></table>
-        <div class="detail-note" id="detalle-caja-obs"></div>
-      </div>
-      <div id="buscar-cierres-admin" class="panel admin-correction" hidden>
-        <h2>Buscar cajas para corregir</h2>
-        <p class="muted">Solo administrador. Elegi una caja de la lista para cargarla abajo y corregir el arqueo.</p>
-        <div class="admin-search-row">
-          <input id="buscar-cierre-texto" placeholder="Buscar por fecha, diferencia o usuario">
-          <button type="button" id="actualizar-cierres">Actualizar</button>
-        </div>
-        <table id="tabla-cierres-admin"></table>
-      </div>
-      <form id="corregir-arqueo-form" class="panel admin-correction" hidden>
-        <h2 id="correccion-titulo">Modificar caja</h2>
-        <p id="correccion-ayuda" class="muted">Selecciona una caja de la tabla o del buscador, ajusta los importes y guarda el motivo.</p>
-        <input type="hidden" name="caja_id">
-        <input type="hidden" name="arqueo_id">
-        <div class="arqueo-grid">
-          <div class="arqueo-head">Medio</div>
-          <div class="arqueo-head">Sistema</div>
-          <div class="arqueo-head">Nuevo contado</div>
-          <div class="arqueo-head">Nueva dif.</div>
-          <label>Efectivo</label><strong id="corr-sis-efectivo">$0</strong><input name="efectivo_contado" type="number" step="0.01" value="0"><span id="corr-dif-efectivo">$0</span>
-          <label>Transferencia</label><strong id="corr-sis-transferencia">$0</strong><input name="transferencia_contado" type="number" step="0.01" value="0"><span id="corr-dif-transferencia">$0</span>
-          <label>Debito</label><strong id="corr-sis-debito">$0</strong><input name="debito_contado" type="number" step="0.01" value="0"><span id="corr-dif-debito">$0</span>
-          <label>Credito</label><strong id="corr-sis-credito">$0</strong><input name="credito_contado" type="number" step="0.01" value="0"><span id="corr-dif-credito">$0</span>
-          <label>Posnet</label><strong id="corr-sis-posnet">$0</strong><input name="posnet_contado" type="number" step="0.01" value="0"><span id="corr-dif-posnet">$0</span>
-        </div>
-        <div class="arqueo-total">
-          <span>Total sistema: <strong id="corr-sistema">$0</strong></span>
-          <span>Total contado: <strong id="corr-contado">$0</strong></span>
-          <span>Diferencia: <strong id="corr-diferencia">$0</strong></span>
-        </div>
-        <label>Motivo de correccion<input name="motivo" required placeholder="Ej: se cargo mal el posnet"></label>
-        <button class="danger">Guardar correccion</button>
-      </form>
-    </section>
-
-    <section id="categorias" class="view simple" data-kind="categorias"></section>
-    <section id="marcas" class="view simple" data-kind="marcas"></section>
-    <section id="proveedores" class="view">
-      <form id="proveedor-form" class="panel grid-form"></form>
-      <div class="panel"><table id="tabla-proveedores"></table></div>
-    </section>
-
-    <section id="usuarios" class="view">
-      <form id="usuario-form" class="panel grid-form"></form>
-      <div class="split">
-        <div class="panel"><table id="tabla-usuarios"></table></div>
-        <form id="permisos-form" class="panel">
-          <h2>Permisos</h2>
-          <input type="hidden" name="usuario_id">
-          <div id="permisos-list"></div>
-          <button>Guardar permisos</button>
-        </form>
-      </div>
+      <div class="panel"><h2>Historial</h2><table id="tabla-caja"></table></div>
     </section>
 
     <section id="reportes" class="view">
-      <div class="report-hero">
-        <div>
-          <span>Bebidas San Martin</span>
-          <h2>Reporte comercial</h2>
-          <p id="rep-periodo">Periodo del dia</p>
-        </div>
-        <form id="reportes-form" class="report-controls">
-          <label>Desde<input name="desde" type="date"></label>
-          <label>Hasta<input name="hasta" type="date"></label>
-          <button>Actualizar</button>
-          <button type="button" class="secondary" id="print-report">Imprimir</button>
-          <button type="button" class="secondary" id="export-report">CSV</button>
-        </form>
-      </div>
-      <div class="cards report-cards">
-        <article><span>Ventas</span><strong id="rep-ventas">0</strong><small>Operaciones del periodo</small></article>
-        <article><span>Total vendido</span><strong id="rep-total">$0</strong><small>Facturacion</small></article>
-        <article><span>Ticket promedio</span><strong id="rep-promedio">$0</strong><small>Promedio por venta</small></article>
-        <article><span>Mas vendido</span><strong id="rep-top">-</strong><small id="rep-bajos">0 productos con stock bajo</small></article>
-      </div>
-      <div class="split">
-        <div class="panel"><h2>Medios de pago</h2><table id="tabla-medios"></table></div>
-        <div class="panel"><h2>Productos mas vendidos</h2><table id="tabla-top"></table></div>
-      </div>
-      <div class="panel"><h2>Movimientos de stock</h2><table id="tabla-movimientos"></table></div>
-      <div class="panel"><h2>Stock bajo</h2><table id="tabla-reporte-bajos"></table></div>
+      <form id="reportes-form" class="panel grid-form"><label>Desde<input name="desde" type="date"></label><label>Hasta<input name="hasta" type="date"></label><button>Actualizar</button><button type="button" class="secondary" id="print-report">Imprimir</button></form>
+      <div class="cards"><article><span>Ventas</span><strong id="rep-ventas">0</strong></article><article><span>Total</span><strong id="rep-total">$0</strong></article><article><span>Stock bajo</span><strong id="rep-stock">0</strong></article><article><span>Periodo</span><strong id="rep-periodo">-</strong></article></div>
+      <div class="split"><div class="panel"><h2>Medios de pago</h2><table id="tabla-medios"></table></div><div class="panel"><h2>Productos mas vendidos</h2><table id="tabla-top"></table></div></div>
+      <div class="panel"><h2>Stock bajo</h2><table id="tabla-bajos"></table></div>
     </section>
 
-    <section id="configuracion" class="view">
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Backups</h2>
-            <p class="muted">Crea copias, descargalas y restaura una base si hace falta.</p>
-          </div>
-          <button id="crear-backup">Crear backup ahora</button>
-        </div>
-        <div class="tool-row">
-          <button class="secondary" id="export-productos">Exportar productos CSV</button>
-        </div>
-        <p id="backup-status" class="muted"></p>
-        <table id="tabla-backups"></table>
-        <form id="restore-form" class="restore-form">
-          <label>Restaurar backup .db<input name="backup" type="file" accept=".db" required></label>
-          <button type="submit" class="danger">Restaurar backup</button>
-        </form>
-      </div>
-      <div class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Actualizacion de precios</h2>
-            <p class="muted">Aumenta o baja precios de venta por categoria con vista previa.</p>
-          </div>
-        </div>
-        <form id="precio-categoria-form" class="price-update-form">
-          <label>Categoria<select name="categoria_id" required></select></label>
-          <label>Porcentaje<input name="porcentaje" type="number" step="0.01" placeholder="Ej: 10 o -5" required></label>
-          <label class="check-row"><input name="redondear" type="checkbox" value="1" checked> Redondear a pesos</label>
-          <button type="button" class="secondary" id="preview-precios">Vista previa</button>
-          <button type="submit">Aplicar cambios</button>
-        </form>
-        <p id="precio-categoria-status" class="muted"></p>
-        <table id="tabla-preview-precios"></table>
-      </div>
-      <div class="split security-layout">
-        <form id="password-form" class="panel">
-          <h2>Seguridad</h2>
-          <p class="muted">Cambia tu contrasena de acceso.</p>
-          <label>Contrasena actual<input name="actual" type="password" autocomplete="current-password" required></label>
-          <label>Nueva contrasena<input name="nueva" type="password" autocomplete="new-password" required></label>
-          <label>Repetir nueva<input name="repetir" type="password" autocomplete="new-password" required></label>
-          <button>Actualizar contrasena</button>
-        </form>
-        <div id="auditoria-panel" class="panel" hidden>
-          <div class="panel-head">
-            <div>
-              <h2>Registro de seguridad</h2>
-              <p class="muted">Acciones importantes del sistema.</p>
-            </div>
-            <button type="button" class="secondary" id="actualizar-auditoria">Actualizar</button>
-          </div>
-          <input id="auditoria-buscar" placeholder="Buscar por usuario, accion o detalle">
-          <table id="tabla-auditoria"></table>
-        </div>
-      </div>
+    <section id="herramientas" class="view">
+      <div class="panel"><div class="panel-head"><div><h2>Actualizacion de precios</h2><p class="muted">Por categoria, con vista previa.</p></div></div><form id="precios-form" class="grid-form"><label>Categoria<select name="categoria_id"></select></label><label>Porcentaje<input name="porcentaje" type="number" step="0.01" required></label><label class="check"><input name="redondear" type="checkbox" value="1" checked> Redondear</label><button type="button" class="secondary" id="preview-precios">Vista previa</button><button>Aplicar</button></form><p id="precios-status" class="muted"></p><table id="tabla-precios"></table></div>
+      <div class="panel"><div class="panel-head"><div><h2>Backups</h2><p class="muted">Crear y descargar copias.</p></div><button id="crear-backup">Crear backup</button></div><table id="tabla-backups"></table></div>
+      <div class="panel" id="auditoria-box"><h2>Auditoria</h2><table id="tabla-auditoria"></table></div>
     </section>
   </main>
-  <div id="producto-modal" class="modal" hidden>
-    <div class="modal-box">
-      <div class="modal-head">
-        <h2>Buscar producto</h2>
-        <button type="button" class="secondary" id="cerrar-producto-modal">Cerrar</button>
-      </div>
-      <input id="producto-modal-search" placeholder="Codigo, nombre o marca">
-      <table id="producto-modal-table"></table>
-    </div>
-  </div>
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

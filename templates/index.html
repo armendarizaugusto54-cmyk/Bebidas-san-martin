@@ -15,7 +15,8 @@
     <button data-view="clientes" data-module="Clientes">Clientes</button>
     <button data-view="caja" data-module="Caja">Caja</button>
     <button data-view="reportes" data-module="Reportes">Reportes</button>
-    <button data-view="herramientas" data-module="Herramientas">Herramientas</button>
+    <button data-view="compras" data-module="Compras">Compras</button>
+    <button data-view="proveedores" data-module="Proveedores">Proveedores</button>
     <button data-view="usuarios" data-module="Usuarios">Usuarios y permisos</button>
     <a href="{{ url_for('logout') }}">Salir</a>
   </aside>
@@ -653,7 +654,237 @@
       <div class="panel"><h2>Stock bajo</h2><table id="tabla-bajos"></table></div>
     </section>
 
-    <section id="usuarios" class="view">
+    
+    <section id="compras" class="view">
+      <div class="compras-head">
+        <div>
+          <h2>Compras</h2>
+          <p class="muted">Registre mercadería, actualice stock y costos automáticamente.</p>
+        </div>
+        <div class="compra-head-total">
+          <span>Total compra</span>
+          <strong id="compra-total-top">$0.00</strong>
+        </div>
+      </div>
+
+      <form id="compra-form">
+        <div class="compras-grid">
+          <div class="panel compra-carga">
+            <div class="compra-datos">
+              <label>Proveedor
+                <select name="proveedor_id" required></select>
+              </label>
+
+              <label>Forma de pago
+                <select name="tipo_pago">
+                  <option>EFECTIVO</option>
+                  <option>TRANSFERENCIA</option>
+                  <option>CUENTA CORRIENTE</option>
+                  <option>OTRO</option>
+                </select>
+              </label>
+
+              <label>Comprobante
+                <input name="comprobante" autocomplete="off">
+              </label>
+
+              <label>Observaciones
+                <input name="observaciones" autocomplete="off">
+              </label>
+            </div>
+
+            <label>Producto
+              <select id="compra-producto"></select>
+            </label>
+
+            <div class="compra-item-grid">
+              <label>Cantidad
+                <input id="compra-cantidad" type="number" min="0.01" step="0.01" value="1">
+              </label>
+
+              <label>Costo unitario
+                <input id="compra-costo" type="number" min="0" step="0.01" value="0">
+              </label>
+
+              <button type="button" id="agregar-compra-item">Agregar producto</button>
+            </div>
+
+            <div class="compra-opciones">
+              <label class="check">
+                <input name="actualizar_costos" type="checkbox" checked>
+                Actualizar precio de compra
+              </label>
+              <label class="check">
+                <input name="recalcular_venta" type="checkbox" checked>
+                Recalcular precio de venta
+              </label>
+            </div>
+          </div>
+
+          <div class="panel compra-ticket-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Detalle de la compra</h2>
+                <p class="muted">Puede cambiar cantidad o costo antes de guardar.</p>
+              </div>
+              <button type="button" class="danger ghost-danger" id="vaciar-compra">Vaciar</button>
+            </div>
+
+            <div class="compra-ticket-scroll">
+              <table id="tabla-compra-ticket"></table>
+            </div>
+
+            <div class="compra-ticket-footer">
+              <span id="compra-items-resumen">0 productos</span>
+              <strong id="compra-total">$0.00</strong>
+            </div>
+          </div>
+        </div>
+
+        <button type="submit" class="success guardar-compra-btn">Guardar compra</button>
+      </form>
+
+      <div class="panel">
+        <div class="panel-head compras-list-head">
+          <div>
+            <h2>Historial de compras</h2>
+            <p class="muted">Filtre por proveedor o fecha.</p>
+          </div>
+          <div class="compras-filtros">
+            <select id="filtro-compras-proveedor"></select>
+            <input id="filtro-compras-desde" type="date">
+            <input id="filtro-compras-hasta" type="date">
+            <button type="button" class="secondary" id="filtrar-compras">Filtrar</button>
+          </div>
+        </div>
+        <table id="tabla-compras"></table>
+      </div>
+
+      <div id="compra-detalle-panel" class="panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="compra-detalle-title">Detalle de compra</h2>
+            <p id="compra-detalle-sub" class="muted"></p>
+          </div>
+          <div class="actions">
+            <button type="button" id="imprimir-compra">Imprimir</button>
+            <button type="button" class="secondary" id="cerrar-compra-detalle">Cerrar</button>
+          </div>
+        </div>
+        <table id="tabla-compra-detalle"></table>
+        <div id="compra-detalle-total" class="total"></div>
+      </div>
+    </section>
+
+    <section id="proveedores" class="view">
+      <div class="proveedores-head">
+        <div>
+          <h2>Proveedores</h2>
+          <p class="muted">Datos comerciales, cuenta corriente y pagos.</p>
+        </div>
+        <button type="button" class="secondary" id="nuevo-proveedor">Nuevo proveedor</button>
+      </div>
+
+      <div class="proveedores-layout">
+        <form id="proveedor-form" class="panel proveedor-form">
+          <input type="hidden" name="id">
+          <div class="panel-head">
+            <div>
+              <h2 id="proveedor-form-title">Nuevo proveedor</h2>
+              <p class="muted">Complete los datos del proveedor.</p>
+            </div>
+          </div>
+
+          <div class="proveedor-grid">
+            <label class="proveedor-nombre">Nombre / Razón social
+              <input name="nombre" required autocomplete="off">
+            </label>
+            <label>CUIT
+              <input name="cuit" autocomplete="off">
+            </label>
+            <label>Teléfono
+              <input name="telefono" autocomplete="off">
+            </label>
+            <label>WhatsApp
+              <input name="whatsapp" autocomplete="off">
+            </label>
+            <label>Dirección
+              <input name="direccion" autocomplete="off">
+            </label>
+            <label>Localidad
+              <input name="localidad" autocomplete="off">
+            </label>
+            <label>Email
+              <input name="email" type="email" autocomplete="off">
+            </label>
+            <label class="proveedor-observaciones">Observaciones
+              <input name="observaciones" autocomplete="off">
+            </label>
+          </div>
+
+          <div class="proveedor-form-actions">
+            <button type="button" class="secondary" id="cancelar-proveedor">Cancelar</button>
+            <button type="submit">Guardar proveedor</button>
+          </div>
+        </form>
+
+        <div class="panel proveedores-resumen-panel">
+          <h2>Resumen</h2>
+          <div class="proveedores-resumen">
+            <article><span>Proveedores</span><strong id="proveedores-total">0</strong></article>
+            <article><span>Saldo total</span><strong id="proveedores-saldo-total">$0.00</strong></article>
+            <article><span>Compras acumuladas</span><strong id="proveedores-compras-total">$0.00</strong></article>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Listado de proveedores</h2>
+            <p class="muted" id="proveedores-contador">0 proveedores</p>
+          </div>
+          <input id="buscar-proveedores" class="proveedores-buscador" placeholder="Buscar nombre, CUIT o localidad">
+        </div>
+        <table id="tabla-proveedores"></table>
+      </div>
+
+      <div id="proveedor-cuenta-panel" class="panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="proveedor-cuenta-title">Cuenta del proveedor</h2>
+            <p id="proveedor-cuenta-sub" class="muted"></p>
+          </div>
+          <button type="button" class="secondary" id="cerrar-proveedor-cuenta">Cerrar</button>
+        </div>
+
+        <div class="cards compact proveedor-cuenta-cards">
+          <article><span>Saldo</span><strong id="proveedor-saldo">$0.00</strong></article>
+          <article><span>Debe</span><strong id="proveedor-debe">$0.00</strong></article>
+          <article><span>Haber</span><strong id="proveedor-haber">$0.00</strong></article>
+          <article><span>Movimientos</span><strong id="proveedor-movs">0</strong></article>
+        </div>
+
+        <form id="pago-proveedor-form" class="panel pago-proveedor-form">
+          <input type="hidden" name="proveedor_id">
+          <h2>Registrar pago</h2>
+          <label>Importe
+            <input name="importe" type="number" min="0.01" step="0.01" required>
+          </label>
+          <label>Comprobante
+            <input name="comprobante" autocomplete="off">
+          </label>
+          <label>Observaciones
+            <input name="observaciones" autocomplete="off">
+          </label>
+          <button type="submit" class="success">Registrar pago</button>
+        </form>
+
+        <table id="tabla-proveedor-cuenta"></table>
+      </div>
+    </section>
+
+<section id="usuarios" class="view">
       <div class="usuarios-head">
         <div>
           <h2>Usuarios y permisos</h2>
@@ -748,13 +979,7 @@
         <button type="button" class="success guardar-permisos-btn" id="guardar-permisos">Guardar permisos</button>
       </div>
     </section>
-
-    <section id="herramientas" class="view">
-      <div class="panel"><div class="panel-head"><div><h2>Actualizacion de precios</h2><p class="muted">Por categoria, con vista previa.</p></div></div><form id="precios-form" class="grid-form"><label>Categoria<select name="categoria_id"></select></label><label>Porcentaje<input name="porcentaje" type="number" step="0.01" required></label><label class="check"><input name="redondear" type="checkbox" value="1" checked> Redondear</label><button type="button" class="secondary" id="preview-precios">Vista previa</button><button>Aplicar</button></form><p id="precios-status" class="muted"></p><table id="tabla-precios"></table></div>
-      <div class="panel"><div class="panel-head"><div><h2>Backups</h2><p class="muted">Crear y descargar copias.</p></div><button id="crear-backup">Crear backup</button></div><table id="tabla-backups"></table></div>
-      <div class="panel" id="auditoria-box"><h2>Auditoria</h2><table id="tabla-auditoria"></table></div>
-    </section>
-  </main>
+</main>
   <div id="producto-modal" class="modal" hidden>
     <div class="modal-box">
       <div class="panel-head">

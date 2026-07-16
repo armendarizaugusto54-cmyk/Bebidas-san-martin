@@ -5,6 +5,41 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bebidas San Martin</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+
+  <style>
+    /* ==============================
+       BOTONES DEL MODULO DE VENTAS
+       ============================== */
+    #venta-form .venta-botones {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1.25fr;
+      gap: 10px;
+      margin-top: 14px;
+      width: 100%;
+    }
+
+    #venta-form .venta-botones button {
+      width: 100%;
+      min-height: 46px;
+      margin: 0;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    #venta-form #add-item {
+      width: 100%;
+      min-height: 46px;
+      margin-top: 10px;
+      font-weight: 700;
+    }
+
+    @media (max-width: 850px) {
+      #venta-form .venta-botones {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+
 </head>
 <body>
   <aside>
@@ -65,14 +100,13 @@
             <span id="ticket-items">0 productos</span>
             <strong id="ticket-total-inline">$0.00</strong>
           </div>
-          <div class="actions">
-            <button type="button" id="add-item">Agregar</button>
-          </div>
-          <div class="actions doc-actions">
+          <button type="button" id="add-item">Agregar al ticket</button>
+
+          <div class="venta-botones">
             <button type="button" class="secondary" id="print-presupuesto">Presupuesto</button>
             <button type="button" class="secondary" id="print-remito">Remito</button>
+            <button type="submit" class="success">Finalizar venta</button>
           </div>
-          <button class="success">Finalizar venta</button>
         </form>
         <div class="panel">
           <h2>Detalle</h2>

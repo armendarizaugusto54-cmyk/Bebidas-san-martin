@@ -297,35 +297,183 @@
     </section>
 
     <section id="clientes" class="view">
-      <form id="cliente-form" class="panel grid-form">
-        <input type="hidden" name="id">
-        <label>Nombre<input name="nombre" required></label>
-        <label>Telefono<input name="telefono"></label>
-        <label>WhatsApp<input name="whatsapp"></label>
-        <label>Direccion<input name="direccion"></label>
-        <label>Localidad<input name="localidad"></label>
-        <label>CUIT/DNI<input name="cuit"></label>
-        <label>Email<input name="email"></label>
-        <label>Limite credito<input name="limite_credito" type="number" step="0.01"></label>
-        <button>Guardar cliente</button>
-      </form>
-      <div class="panel"><h2>Clientes</h2><table id="tabla-clientes"></table></div>
-      <div id="cuenta-panel" class="panel" hidden>
-        <div class="panel-head"><div><h2 id="cuenta-title">Cuenta corriente</h2><p id="cuenta-sub" class="muted"></p></div><button id="print-cuenta">Imprimir estado</button></div>
-        <div class="cards compact">
-          <article><span>Saldo</span><strong id="cuenta-saldo">$0</strong></article>
-          <article><span>Debe</span><strong id="cuenta-debe">$0</strong></article>
-          <article><span>Haber</span><strong id="cuenta-haber">$0</strong></article>
+      <div class="clientes-head">
+        <div>
+          <h2>Clientes y cuentas corrientes</h2>
+          <p class="muted">Administre clientes, saldos, pagos e historial de movimientos.</p>
+        </div>
+        <button type="button" class="secondary" id="nuevo-cliente">Nuevo cliente</button>
+      </div>
+
+      <div class="clientes-layout">
+        <form id="cliente-form" class="panel cliente-form">
+          <div class="panel-head">
+            <div>
+              <h2 id="cliente-form-title">Nuevo cliente</h2>
+              <p class="muted">Complete los datos comerciales y de contacto.</p>
+            </div>
+          </div>
+
+          <input type="hidden" name="id">
+
+          <div class="cliente-grid">
+            <label class="cliente-nombre">Nombre / Razón social
+              <input name="nombre" required autocomplete="off">
+            </label>
+
+            <label>Teléfono
+              <input name="telefono" autocomplete="off">
+            </label>
+
+            <label>WhatsApp
+              <input name="whatsapp" autocomplete="off">
+            </label>
+
+            <label>Dirección
+              <input name="direccion" autocomplete="off">
+            </label>
+
+            <label>Localidad
+              <input name="localidad" autocomplete="off">
+            </label>
+
+            <label>CUIT / DNI
+              <input name="cuit" autocomplete="off">
+            </label>
+
+            <label>Email
+              <input name="email" type="email" autocomplete="off">
+            </label>
+
+            <label>Límite de crédito
+              <input name="limite_credito" type="number" min="0" step="0.01" value="0">
+            </label>
+          </div>
+
+          <div class="cliente-form-actions">
+            <button type="button" class="secondary" id="cancelar-cliente">Cancelar</button>
+            <button type="submit">Guardar cliente</button>
+          </div>
+        </form>
+
+        <div class="panel clientes-resumen-panel">
+          <h2>Resumen</h2>
+          <div class="cliente-resumen-cards">
+            <article>
+              <span>Clientes activos</span>
+              <strong id="clientes-total">0</strong>
+            </article>
+            <article>
+              <span>Saldo total</span>
+              <strong id="clientes-saldo-total">$0.00</strong>
+            </article>
+            <article>
+              <span>Con deuda</span>
+              <strong id="clientes-con-deuda">0</strong>
+            </article>
+            <article>
+              <span>Crédito disponible</span>
+              <strong id="clientes-credito-disponible">$0.00</strong>
+            </article>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head clientes-list-head">
+          <div>
+            <h2>Listado de clientes</h2>
+            <p class="muted" id="clientes-contador">0 clientes</p>
+          </div>
+          <input id="buscar-clientes-local" class="clientes-buscador" placeholder="Buscar nombre, CUIT, teléfono o localidad">
+        </div>
+        <table id="tabla-clientes"></table>
+      </div>
+
+      <div id="cuenta-panel" class="panel cuenta-panel" hidden>
+        <div class="panel-head cuenta-panel-head">
+          <div>
+            <h2 id="cuenta-title">Cuenta corriente</h2>
+            <p id="cuenta-sub" class="muted"></p>
+          </div>
+          <div class="cuenta-head-actions">
+            <button type="button" class="secondary" id="whatsapp-cliente">WhatsApp</button>
+            <button type="button" id="print-cuenta">Imprimir estado</button>
+            <button type="button" class="secondary" id="cerrar-cuenta-panel">Cerrar</button>
+          </div>
+        </div>
+
+        <div class="cuenta-alerta" id="cuenta-alerta"></div>
+
+        <div class="cards compact cuenta-cards">
+          <article><span>Saldo</span><strong id="cuenta-saldo">$0.00</strong></article>
+          <article><span>Debe</span><strong id="cuenta-debe">$0.00</strong></article>
+          <article><span>Haber</span><strong id="cuenta-haber">$0.00</strong></article>
+          <article><span>Límite</span><strong id="cuenta-limite">$0.00</strong></article>
+          <article><span>Disponible</span><strong id="cuenta-disponible">$0.00</strong></article>
           <article><span>Movimientos</span><strong id="cuenta-movs">0</strong></article>
         </div>
-        <form id="pago-form" class="grid-form">
-          <input type="hidden" name="cliente_id">
-          <label>Importe<input name="importe" type="number" step="0.01" required></label>
-          <label>Comprobante<input name="comprobante"></label>
-          <label>Observaciones<input name="observaciones"></label>
-          <button>Registrar pago</button>
-        </form>
+
+        <div class="cuenta-operaciones">
+          <form id="pago-form" class="panel cuenta-operacion-form">
+            <input type="hidden" name="cliente_id">
+            <h2>Registrar pago</h2>
+            <label>Importe
+              <input name="importe" type="number" min="0.01" step="0.01" required>
+            </label>
+            <label>Comprobante
+              <input name="comprobante" autocomplete="off">
+            </label>
+            <label>Observaciones
+              <input name="observaciones" autocomplete="off">
+            </label>
+            <button type="submit" class="success">Registrar pago</button>
+          </form>
+
+          <form id="ajuste-cuenta-form" class="panel cuenta-operacion-form">
+            <input type="hidden" name="cliente_id">
+            <h2>Ajuste manual</h2>
+            <label>Tipo
+              <select name="tipo">
+                <option value="DEBE">Debe</option>
+                <option value="HABER">Haber</option>
+              </select>
+            </label>
+            <label>Importe
+              <input name="importe" type="number" min="0.01" step="0.01" required>
+            </label>
+            <label>Concepto
+              <input name="concepto" required autocomplete="off">
+            </label>
+            <label>Observaciones
+              <input name="observaciones" autocomplete="off">
+            </label>
+            <button type="submit">Registrar ajuste</button>
+          </form>
+        </div>
+
+        <div class="cuenta-filtros">
+          <label>Desde
+            <input id="cuenta-desde" type="date">
+          </label>
+          <label>Hasta
+            <input id="cuenta-hasta" type="date">
+          </label>
+          <button type="button" class="secondary" id="filtrar-cuenta">Filtrar</button>
+          <button type="button" class="secondary" id="limpiar-filtro-cuenta">Limpiar</button>
+        </div>
+
         <table id="tabla-cuenta"></table>
+
+        <div class="panel cuenta-ventas-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Historial de compras</h2>
+              <p class="muted">Ventas realizadas al cliente.</p>
+            </div>
+          </div>
+          <table id="tabla-cliente-ventas"></table>
+        </div>
       </div>
     </section>
 

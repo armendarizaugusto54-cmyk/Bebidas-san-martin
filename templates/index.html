@@ -5,41 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Bebidas San Martin</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
-
-  <style>
-    /* ==============================
-       BOTONES DEL MODULO DE VENTAS
-       ============================== */
-    #venta-form .venta-botones {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1.25fr;
-      gap: 10px;
-      margin-top: 14px;
-      width: 100%;
-    }
-
-    #venta-form .venta-botones button {
-      width: 100%;
-      min-height: 46px;
-      margin: 0;
-      font-weight: 700;
-      white-space: nowrap;
-    }
-
-    #venta-form #add-item {
-      width: 100%;
-      min-height: 46px;
-      margin-top: 10px;
-      font-weight: 700;
-    }
-
-    @media (max-width: 850px) {
-      #venta-form .venta-botones {
-        grid-template-columns: 1fr;
-      }
-    }
-  </style>
-
 </head>
 <body>
   <aside>
@@ -75,46 +40,95 @@
     <section id="ventas" class="view">
       <div class="sale-head">
         <div>
-          <h2>Ventas</h2>
-          <p class="muted">Busca productos con F3, arma el ticket y emite presupuesto, remito o venta.</p>
+          <h2>Nueva venta</h2>
+          <p class="muted">F3 para buscar · Enter para agregar · F4 para finalizar · Supr para quitar.</p>
         </div>
         <div class="sale-head-total">
           <span>Total actual</span>
           <strong id="venta-total-top">$0.00</strong>
         </div>
       </div>
-      <div class="split sale-layout">
-        <form id="venta-form" class="panel">
-          <h2>Nueva venta</h2>
-          <label>Cliente<select name="cliente_id"></select></label>
-          <label>Medio<select name="tipo"><option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option><option>CREDITO</option><option>POSNET</option><option>CUENTA CORRIENTE</option></select></label>
-          <label>Producto
-            <select id="venta-producto" hidden></select>
-            <div class="product-picker">
-              <input id="venta-producto-nombre" readonly placeholder="Buscar producto con F3 o boton Buscar">
-              <button type="button" class="secondary" id="buscar-producto">Buscar</button>
-            </div>
-          </label>
-          <label>Cantidad<input id="venta-cantidad" type="number" value="1" min="1" step="1"></label>
-          <div class="sale-summary">
-            <span id="ticket-items">0 productos</span>
-            <strong id="ticket-total-inline">$0.00</strong>
-          </div>
-          <button type="button" id="add-item">Agregar al ticket</button>
 
-          <div class="venta-botones">
-            <button type="button" class="secondary" id="print-presupuesto">Presupuesto</button>
-            <button type="button" class="secondary" id="print-remito">Remito</button>
-            <button type="submit" class="success">Finalizar venta</button>
+      <form id="venta-form">
+        <div class="ventas-grid">
+          <div class="panel venta-carga">
+            <div class="venta-datos">
+              <label>Cliente
+                <select name="cliente_id"></select>
+              </label>
+              <label>Medio de pago
+                <select name="tipo">
+                  <option>EFECTIVO</option>
+                  <option>TRANSFERENCIA</option>
+                  <option>DEBITO</option>
+                  <option>CREDITO</option>
+                  <option>POSNET</option>
+                  <option>CUENTA CORRIENTE</option>
+                </select>
+              </label>
+            </div>
+
+            <label>Producto
+              <select id="venta-producto" hidden></select>
+              <div class="product-picker">
+                <input id="venta-producto-nombre" readonly placeholder="Presione F3 o Buscar para elegir un producto">
+                <button type="button" class="secondary" id="buscar-producto">F3 · Buscar</button>
+              </div>
+            </label>
+
+            <div class="venta-agregar">
+              <label>Cantidad
+                <input id="venta-cantidad" type="number" value="1" min="1" step="1">
+              </label>
+              <button type="button" id="add-item">Agregar al ticket ↵</button>
+            </div>
+
+            <div class="producto-ayuda">
+              Seleccione un producto con F3. Después escriba la cantidad y presione Enter.
+            </div>
+
+            <div class="sale-summary">
+              <span id="ticket-items">0 productos</span>
+              <strong id="ticket-total-inline">$0.00</strong>
+            </div>
           </div>
-        </form>
-        <div class="panel">
-          <h2>Detalle</h2>
-          <table id="ticket"></table>
-          <div class="total" id="ticket-total">TOTAL: $0.00</div>
+
+          <div class="panel ticket-panel">
+            <div class="panel-head ticket-head">
+              <div>
+                <h2>Detalle del ticket</h2>
+                <p class="muted">Puede modificar la cantidad en la tabla.</p>
+              </div>
+              <button type="button" class="danger ghost-danger" id="vaciar-ticket">Vaciar ticket</button>
+            </div>
+
+            <div class="ticket-scroll">
+              <table id="ticket"></table>
+            </div>
+
+            <div class="ticket-footer">
+              <span id="ticket-productos-resumen">0 unidades</span>
+              <div class="total" id="ticket-total">TOTAL: $0.00</div>
+            </div>
+          </div>
         </div>
+
+        <div class="panel venta-final-actions">
+          <button type="button" class="secondary" id="print-presupuesto">Presupuesto</button>
+          <button type="button" class="secondary" id="print-remito">Remito</button>
+          <button type="submit" class="success venta-finalizar">Finalizar venta · F4</button>
+        </div>
+      </form>
+
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Últimas ventas</h2>
+            <p class="muted">Puede reimprimir el ticket desde esta lista.</p>
+          </div>
+        </div>
+        <table id="tabla-ventas"></table>
       </div>
-      <div class="panel"><h2>Ultimas ventas</h2><table id="tabla-ventas"></table></div>
     </section>
 
     <section id="productos" class="view">

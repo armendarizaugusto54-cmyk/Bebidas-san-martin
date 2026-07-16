@@ -33,11 +33,38 @@
     </header>
 
     <section id="inicio" class="view active">
-      <div class="cards">
-        <article><span>Productos</span><strong id="card-productos">0</strong></article>
-        <article><span>Ventas hoy</span><strong id="card-ventas">$0</strong></article>
-        <article><span>Stock bajo</span><strong id="card-stock">0</strong></article>
-        <article><span>Inventario</span><strong id="card-inventario">$0</strong></article>
+      <div class="dashboard-head">
+        <div>
+          <h2>Resumen del dia</h2>
+          <p class="muted">Ventas, caja y alertas principales del negocio.</p>
+        </div>
+        <button type="button" class="secondary" data-view-shortcut="reportes">Ver reportes</button>
+      </div>
+      <div class="cards dashboard-cards">
+        <article><span>Ventas hoy</span><strong id="card-ventas">$0</strong><small id="card-ventas-cantidad">0 operaciones</small></article>
+        <article><span>Ticket promedio</span><strong id="card-ticket">$0</strong><small>Promedio del dia</small></article>
+        <article><span>Caja</span><strong id="card-caja">Cerrada</strong><small id="card-caja-detalle">$0 esperado</small></article>
+        <article><span>Stock bajo</span><strong id="card-stock">0</strong><small id="card-productos">0 productos</small></article>
+      </div>
+      <div class="dashboard-grid">
+        <div class="panel dashboard-panel">
+          <h2>Medios de pago hoy</h2>
+          <div id="dashboard-medios" class="payment-list"></div>
+        </div>
+        <div class="panel dashboard-panel">
+          <h2>Ultimo cierre</h2>
+          <div id="dashboard-cierre" class="cash-status"></div>
+        </div>
+      </div>
+      <div class="dashboard-grid wide-left">
+        <div class="panel">
+          <h2>Ultimas ventas</h2>
+          <table id="tabla-ultimas-ventas"></table>
+        </div>
+        <div class="panel">
+          <h2>Top productos hoy</h2>
+          <table id="tabla-top-dashboard"></table>
+        </div>
       </div>
       <div class="panel">
         <h2>Productos con stock bajo</h2>
@@ -48,7 +75,13 @@
     <section id="ventas" class="view">
       <div class="split sale-layout">
         <form id="venta-form" class="panel">
-          <h2>Nueva venta</h2>
+          <div class="sale-form-head">
+            <div>
+              <h2>Nueva venta</h2>
+              <p class="muted">Carga productos, arma presupuesto o finaliza la venta.</p>
+            </div>
+            <strong id="venta-total-mini">$0.00</strong>
+          </div>
           <label>Cliente<select name="cliente_id" required></select></label>
           <label>Tipo<select name="tipo">
             <option>EFECTIVO</option><option>TRANSFERENCIA</option><option>DEBITO</option>
@@ -70,14 +103,22 @@
           </div>
           <div class="sale-actions">
             <button type="button" class="sale-button add" id="add-item">Agregar producto</button>
-            <button type="button" class="sale-button print" id="print-ticket">Imprimir ultimo ticket</button>
+            <button type="button" class="sale-button print" id="print-presupuesto">Presupuesto</button>
+            <button type="button" class="sale-button print" id="print-remito">Remito</button>
           </div>
           <div class="sale-actions final">
             <button type="submit" class="sale-button finish success">Finalizar venta</button>
+            <button type="button" class="sale-button print" id="print-ticket">Ticket ultima venta</button>
           </div>
         </form>
-        <div class="panel">
-          <h2>Ticket</h2>
+        <div class="panel ticket-panel">
+          <div class="ticket-head">
+            <div>
+              <h2>Detalle</h2>
+              <p class="muted">Productos preparados para vender o presupuestar.</p>
+            </div>
+            <span id="ticket-count-badge">0</span>
+          </div>
           <table id="ticket"></table>
           <div class="total" id="ticket-total">TOTAL: $0.00</div>
         </div>
@@ -115,6 +156,29 @@
     <section id="clientes" class="view">
       <form id="cliente-form" class="panel grid-form"></form>
       <div class="panel"><table id="tabla-clientes"></table></div>
+      <div id="cuenta-panel" class="panel account-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="cuenta-titulo">Cuenta corriente</h2>
+            <p id="cuenta-subtitulo" class="muted"></p>
+          </div>
+          <button type="button" id="imprimir-cuenta">Imprimir estado</button>
+        </div>
+        <div class="cash-detail-grid">
+          <article><span>Saldo actual</span><strong id="cuenta-saldo">$0</strong></article>
+          <article><span>Total debe</span><strong id="cuenta-debe">$0</strong></article>
+          <article><span>Total pagos</span><strong id="cuenta-haber">$0</strong></article>
+          <article><span>Movimientos</span><strong id="cuenta-movs">0</strong></article>
+        </div>
+        <form id="cuenta-pago-form" class="account-payment-form">
+          <input type="hidden" name="cliente_id">
+          <label>Importe pago<input name="importe" type="number" step="0.01" required></label>
+          <label>Comprobante<input name="comprobante" placeholder="Opcional"></label>
+          <label>Observaciones<input name="observaciones" placeholder="Opcional"></label>
+          <button>Registrar pago</button>
+        </form>
+        <table id="tabla-cuenta"></table>
+      </div>
     </section>
 
     <section id="caja" class="view">
@@ -159,7 +223,43 @@
           <button>Cerrar</button>
         </form>
       </div>
-      <div class="panel"><table id="tabla-caja"></table></div>
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Historial de caja</h2>
+            <p class="muted">Filtra cierres, revisa diferencias e imprime el arqueo.</p>
+          </div>
+          <button type="button" class="secondary" id="limpiar-filtros-caja">Limpiar</button>
+        </div>
+        <div class="caja-filter-row">
+          <input id="caja-buscar" placeholder="Buscar por numero, fecha, usuario o diferencia">
+          <input id="caja-desde" type="date">
+          <input id="caja-hasta" type="date">
+          <select id="caja-estado-filtro">
+            <option value="">Todos</option>
+            <option value="ABIERTA">Abierta</option>
+            <option value="CERRADA">Cerrada</option>
+          </select>
+        </div>
+        <table id="tabla-caja"></table>
+      </div>
+      <div id="detalle-caja-panel" class="panel caja-detail" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="detalle-caja-titulo">Detalle de caja</h2>
+            <p id="detalle-caja-subtitulo" class="muted"></p>
+          </div>
+          <button type="button" id="imprimir-detalle-caja">Imprimir arqueo</button>
+        </div>
+        <div class="cash-detail-grid">
+          <article><span>Apertura</span><strong id="detalle-caja-apertura">$0</strong></article>
+          <article><span>Total sistema</span><strong id="detalle-caja-sistema">$0</strong></article>
+          <article><span>Total contado</span><strong id="detalle-caja-contado">$0</strong></article>
+          <article><span>Diferencia</span><strong id="detalle-caja-diferencia">$0</strong></article>
+        </div>
+        <table id="tabla-detalle-caja"></table>
+        <div class="detail-note" id="detalle-caja-obs"></div>
+      </div>
       <div id="buscar-cierres-admin" class="panel admin-correction" hidden>
         <h2>Buscar cajas para corregir</h2>
         <p class="muted">Solo administrador. Elegi una caja de la lista para cargarla abajo y corregir el arqueo.</p>
@@ -216,17 +316,25 @@
     </section>
 
     <section id="reportes" class="view">
-      <form id="reportes-form" class="panel grid-form">
-        <label>Desde<input name="desde" type="date"></label>
-        <label>Hasta<input name="hasta" type="date"></label>
-        <button>Actualizar</button>
-        <button type="button" class="secondary" id="export-report">Exportar CSV</button>
-      </form>
-      <div class="cards">
-        <article><span>Ventas</span><strong id="rep-ventas">0</strong></article>
-        <article><span>Total vendido</span><strong id="rep-total">$0</strong></article>
-        <article><span>Stock bajo</span><strong id="rep-bajos">0</strong></article>
-        <article><span>Mas vendido</span><strong id="rep-top">-</strong></article>
+      <div class="report-hero">
+        <div>
+          <span>Bebidas San Martin</span>
+          <h2>Reporte comercial</h2>
+          <p id="rep-periodo">Periodo del dia</p>
+        </div>
+        <form id="reportes-form" class="report-controls">
+          <label>Desde<input name="desde" type="date"></label>
+          <label>Hasta<input name="hasta" type="date"></label>
+          <button>Actualizar</button>
+          <button type="button" class="secondary" id="print-report">Imprimir</button>
+          <button type="button" class="secondary" id="export-report">CSV</button>
+        </form>
+      </div>
+      <div class="cards report-cards">
+        <article><span>Ventas</span><strong id="rep-ventas">0</strong><small>Operaciones del periodo</small></article>
+        <article><span>Total vendido</span><strong id="rep-total">$0</strong><small>Facturacion</small></article>
+        <article><span>Ticket promedio</span><strong id="rep-promedio">$0</strong><small>Promedio por venta</small></article>
+        <article><span>Mas vendido</span><strong id="rep-top">-</strong><small id="rep-bajos">0 productos con stock bajo</small></article>
       </div>
       <div class="split">
         <div class="panel"><h2>Medios de pago</h2><table id="tabla-medios"></table></div>
@@ -238,12 +346,60 @@
 
     <section id="configuracion" class="view">
       <div class="panel">
-        <h2>Herramientas</h2>
-        <div class="tool-row">
+        <div class="panel-head">
+          <div>
+            <h2>Backups</h2>
+            <p class="muted">Crea copias, descargalas y restaura una base si hace falta.</p>
+          </div>
           <button id="crear-backup">Crear backup ahora</button>
+        </div>
+        <div class="tool-row">
           <button class="secondary" id="export-productos">Exportar productos CSV</button>
         </div>
         <p id="backup-status" class="muted"></p>
+        <table id="tabla-backups"></table>
+        <form id="restore-form" class="restore-form">
+          <label>Restaurar backup .db<input name="backup" type="file" accept=".db" required></label>
+          <button type="submit" class="danger">Restaurar backup</button>
+        </form>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Actualizacion de precios</h2>
+            <p class="muted">Aumenta o baja precios de venta por categoria con vista previa.</p>
+          </div>
+        </div>
+        <form id="precio-categoria-form" class="price-update-form">
+          <label>Categoria<select name="categoria_id" required></select></label>
+          <label>Porcentaje<input name="porcentaje" type="number" step="0.01" placeholder="Ej: 10 o -5" required></label>
+          <label class="check-row"><input name="redondear" type="checkbox" value="1" checked> Redondear a pesos</label>
+          <button type="button" class="secondary" id="preview-precios">Vista previa</button>
+          <button type="submit">Aplicar cambios</button>
+        </form>
+        <p id="precio-categoria-status" class="muted"></p>
+        <table id="tabla-preview-precios"></table>
+      </div>
+      <div class="split security-layout">
+        <form id="password-form" class="panel">
+          <h2>Seguridad</h2>
+          <p class="muted">Cambia tu contrasena de acceso.</p>
+          <label>Contrasena actual<input name="actual" type="password" autocomplete="current-password" required></label>
+          <label>Nueva contrasena<input name="nueva" type="password" autocomplete="new-password" required></label>
+          <label>Repetir nueva<input name="repetir" type="password" autocomplete="new-password" required></label>
+          <button>Actualizar contrasena</button>
+        </form>
+        <div id="auditoria-panel" class="panel" hidden>
+          <div class="panel-head">
+            <div>
+              <h2>Registro de seguridad</h2>
+              <p class="muted">Acciones importantes del sistema.</p>
+            </div>
+            <button type="button" class="secondary" id="actualizar-auditoria">Actualizar</button>
+          </div>
+          <input id="auditoria-buscar" placeholder="Buscar por usuario, accion o detalle">
+          <table id="tabla-auditoria"></table>
+        </div>
       </div>
     </section>
   </main>

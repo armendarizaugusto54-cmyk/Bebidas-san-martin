@@ -3,7 +3,7 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let state = { user: null, options: {}, productos: [], ticket: [], current: "inicio", lastReport: null, cuenta: null };
+let state = { user: null, options: {}, productos: [], categorias: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, productosFiltrados: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -75,12 +75,54 @@ function closeProductSearch() {
 async function loadOptions() {
   state.options = await api("/api/options");
   state.productos = state.options.productos || [];
-  const catOptions = [`<option value="">Sin categoria</option>`, ...(state.options.categorias || []).map((c) => `<option value="${c.id}">${c.nombre}</option>`)].join("");
-  $("#producto-form").elements.categoria_id.innerHTML = catOptions;
-  $("#precios-form").elements.categoria_id.innerHTML = [`<option value="__all__">Todas</option>`, `<option value="__none__">Sin categoria</option>`, ...(state.options.categorias || []).map((c) => `<option value="${c.id}">${c.nombre}</option>`)].join("");
-  $("#venta-form").elements.cliente_id.innerHTML = [`<option value="">Consumidor final</option>`, ...(state.options.clientes || []).map((c) => `<option value="${c.id}">${c.nombre} (${money(c.saldo)})</option>`)].join("");
-  $("#venta-producto").innerHTML = state.productos.map((p) => `<option value="${p.id}">${p.codigo} - ${p.nombre} - ${money(p.precio_venta)}</option>`).join("");
-  if (state.current === "ventas" && state.productos.length && !currentProduct()) setVentaProduct(state.productos[0]);
+  state.categorias = state.options.categorias || [];
+
+  const categoriasProducto = [
+    `<option value="">Seleccione categoría</option>`,
+    ...state.categorias.map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)} (${Number(c.ganancia || 0)}%)</option>`)
+  ].join("");
+
+  const productoForm = $("#producto-form");
+  if (productoForm) productoForm.elements.categoria_id.innerHTML = categoriasProducto;
+
+  const recalculoForm = $("#recalcular-categoria-form");
+  if (recalculoForm) {
+    recalculoForm.elements.categoria_id.innerHTML = [
+      `<option value="">Seleccione categoría</option>`,
+      ...state.categorias.map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`)
+    ].join("");
+  }
+
+  const preciosForm = $("#precios-form");
+  if (preciosForm) {
+    preciosForm.elements.categoria_id.innerHTML = [
+      `<option value="">Seleccione categoría</option>`,
+      ...state.categorias.map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`)
+    ].join("");
+  }
+
+  const filtroCategoria = $("#filtro-categoria-productos");
+  if (filtroCategoria) {
+    const valorActual = filtroCategoria.value;
+    filtroCategoria.innerHTML = [
+      `<option value="">Todas las categorías</option>`,
+      ...state.categorias.map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)}</option>`)
+    ].join("");
+    filtroCategoria.value = valorActual;
+  }
+
+  $("#venta-form").elements.cliente_id.innerHTML = [
+    `<option value="">Consumidor final</option>`,
+    ...(state.options.clientes || []).map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)} (${money(c.saldo)})</option>`)
+  ].join("");
+
+  $("#venta-producto").innerHTML = state.productos
+    .map((p) => `<option value="${p.id}">${escapeHtml(p.codigo)} - ${escapeHtml(p.nombre)} - ${money(p.precio_venta)}</option>`)
+    .join("");
+
+  if (state.current === "ventas" && state.productos.length && !currentProduct()) {
+    setVentaProduct(state.productos[0]);
+  }
 }
 
 async function loadDashboard() {
@@ -100,17 +142,101 @@ async function loadDashboard() {
   ], d.top || []);
 }
 
-async function loadProductos() {
-  await loadOptions();
-  const data = await api("/api/productos");
+function calcularVentaProducto() {
+  const form = $("#producto-form");
+  if (!form) return;
+
+  const categoria = state.categorias.find(
+    (c) => String(c.id) === String(form.elements.categoria_id.value)
+  );
+  const compra = Number(form.elements.precio_compra.value || 0);
+  const ganancia = Number(categoria?.ganancia || 0);
+  const venta = Math.round((compra * (1 + ganancia / 100) + Number.EPSILON) * 100) / 100;
+
+  $("#producto-ganancia").value = ganancia;
+  form.elements.precio_venta.value = venta.toFixed(2);
+  $("#preview-compra").textContent = money(compra);
+  $("#preview-ganancia").textContent = `${ganancia}%`;
+  $("#preview-venta").textContent = money(venta);
+}
+
+function resetProductoForm() {
+  const form = $("#producto-form");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.precio_compra.value = "0";
+  form.elements.precio_venta.value = "0.00";
+  form.elements.stock.value = "0";
+  form.elements.stock_minimo.value = "0";
+  $("#producto-form-title").textContent = "Nuevo producto";
+  calcularVentaProducto();
+}
+
+function editarProducto(producto) {
+  if (!producto) return;
+  const form = $("#producto-form");
+
+  Object.entries(producto).forEach(([key, value]) => {
+    if (form.elements[key]) form.elements[key].value = value ?? "";
+  });
+
+  $("#producto-form-title").textContent = `Editar producto: ${producto.nombre}`;
+  calcularVentaProducto();
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.elements.codigo.focus();
+}
+
+function renderCategorias() {
+  table($("#tabla-categorias"), [
+    { key: "nombre", label: "Categoría" },
+    { key: "ganancia", label: "Ganancia", format: (v) => `${Number(v || 0)}%` },
+    { key: "productos", label: "Productos" },
+  ], state.categorias, (r) => `
+    <button type="button" data-edit-categoria="${r.id}">Editar</button>
+    <button type="button" class="danger" data-del-categoria="${r.id}">Borrar</button>
+  `);
+}
+
+function renderProductosLocal() {
+  const categoriaId = $("#filtro-categoria-productos")?.value || "";
+  const busqueda = ($("#buscar-productos-local")?.value || "").trim().toLowerCase();
+
+  const data = state.productos.filter((p) => {
+    const coincideCategoria = !categoriaId || String(p.categoria_id) === String(categoriaId);
+    const texto = [p.codigo, p.nombre, p.marca, p.categoria].join(" ").toLowerCase();
+    return coincideCategoria && (!busqueda || texto.includes(busqueda));
+  });
+
+  state.productosFiltrados = data;
+  $("#productos-contador").textContent = `${data.length} producto${data.length === 1 ? "" : "s"}`;
+
   table($("#tabla-productos"), [
-    { key: "codigo", label: "Codigo" },
+    { key: "codigo", label: "Código" },
     { key: "nombre", label: "Producto" },
-    { key: "categoria", label: "Categoria" },
+    { key: "categoria", label: "Categoría" },
     { key: "marca", label: "Marca" },
+    { key: "precio_compra", label: "Compra", format: money },
+    { key: "ganancia_categoria", label: "Ganancia", format: (v) => `${Number(v || 0)}%` },
     { key: "precio_venta", label: "Venta", format: money },
     { key: "stock", label: "Stock" },
-  ], data, (r) => `<button data-edit-producto="${r.id}">Editar</button><button class="danger" data-del-producto="${r.id}">Borrar</button>`);
+    { key: "stock_minimo", label: "Mínimo" },
+  ], data, (r) => `
+    <button type="button" data-edit-producto="${r.id}">Editar</button>
+    <button type="button" class="danger" data-del-producto="${r.id}">Borrar</button>
+  `);
+}
+
+async function loadProductos() {
+  await loadOptions();
+  state.productos = await api("/api/productos");
+  state.options.productos = state.productos;
+  state.categorias = await api("/api/categorias");
+  state.options.categorias = state.categorias;
+
+  await loadOptions();
+  renderCategorias();
+  renderProductosLocal();
+  calcularVentaProducto();
 }
 
 async function loadClientes() {
@@ -319,10 +445,31 @@ document.addEventListener("click", async (ev) => {
     $("#search").value = "";
     await refresh();
   }
-  if (ev.target.dataset.editProducto) fillForm("#producto-form", state.productos.find((p) => String(p.id) === ev.target.dataset.editProducto));
+  if (ev.target.dataset.editProducto) editarProducto(state.productos.find((p) => String(p.id) === ev.target.dataset.editProducto));
   if (ev.target.dataset.delProducto && confirm("Borrar producto?")) {
     await api(`/api/productos/${ev.target.dataset.delProducto}`, { method: "DELETE" });
     await loadProductos();
+  }
+  if (ev.target.dataset.editCategoria) {
+    const categoria = state.categorias.find((c) => String(c.id) === String(ev.target.dataset.editCategoria));
+    if (categoria) {
+      const form = $("#categoria-form");
+      form.elements.id.value = categoria.id;
+      form.elements.nombre.value = categoria.nombre;
+      form.elements.ganancia.value = categoria.ganancia;
+      form.elements.nombre.focus();
+    }
+  }
+  if (ev.target.dataset.delCategoria) {
+    const categoria = state.categorias.find((c) => String(c.id) === String(ev.target.dataset.delCategoria));
+    if (categoria && confirm(`¿Borrar la categoría "${categoria.nombre}"?`)) {
+      try {
+        await api(`/api/categorias/${categoria.id}`, { method: "DELETE" });
+        await loadProductos();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
   }
   if (ev.target.dataset.editCliente) fillForm("#cliente-form", (await api("/api/clientes")).find((c) => String(c.id) === ev.target.dataset.editCliente));
   if (ev.target.dataset.cuenta) await loadCuenta(ev.target.dataset.cuenta);
@@ -408,9 +555,107 @@ document.addEventListener("keydown", (ev) => {
 
 $("#producto-form").onsubmit = async (ev) => {
   ev.preventDefault();
-  await api("/api/productos", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
-  ev.target.reset();
-  await loadProductos();
+
+  try {
+    const data = Object.fromEntries(new FormData(ev.target));
+    const result = await api("/api/productos", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    alert(`Producto guardado. Precio de venta: ${money(result.precio_venta)}`);
+    resetProductoForm();
+    await loadProductos();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#producto-form").elements.precio_compra.addEventListener("input", calcularVentaProducto);
+$("#producto-form").elements.categoria_id.addEventListener("change", calcularVentaProducto);
+$("#nuevo-producto").onclick = () => {
+  resetProductoForm();
+  $("#producto-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#producto-form").elements.codigo.focus();
+};
+$("#cancelar-producto").onclick = resetProductoForm;
+
+$("#filtro-categoria-productos").addEventListener("change", renderProductosLocal);
+$("#buscar-productos-local").addEventListener("input", renderProductosLocal);
+
+$("#categoria-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  try {
+    await api("/api/categorias", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
+    });
+    ev.target.reset();
+    ev.target.elements.id.value = "";
+    ev.target.elements.ganancia.value = "30";
+    await loadProductos();
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#cancelar-categoria").onclick = () => {
+  const form = $("#categoria-form");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.ganancia.value = "30";
+};
+
+function cargarGananciaRecalculo() {
+  const form = $("#recalcular-categoria-form");
+  const categoria = state.categorias.find(
+    (c) => String(c.id) === String(form.elements.categoria_id.value)
+  );
+  form.elements.ganancia.value = categoria ? Number(categoria.ganancia || 0) : "";
+  $("#recalculo-status").textContent = "";
+  $("#tabla-recalculo").innerHTML = "";
+}
+
+$("#recalcular-categoria-form").elements.categoria_id.addEventListener("change", cargarGananciaRecalculo);
+
+async function recalcularCategoria(aplicar) {
+  const form = $("#recalcular-categoria-form");
+  const data = Object.fromEntries(new FormData(form));
+  data.redondear = form.elements.redondear.checked ? 1 : 0;
+  data.aplicar = aplicar ? 1 : 0;
+
+  if (!data.categoria_id) return alert("Seleccione una categoría.");
+  if (aplicar && !confirm("¿Aplicar el nuevo porcentaje a todos los productos de la categoría?")) return;
+
+  try {
+    const result = await api("/api/precios/categoria", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    $("#recalculo-status").textContent =
+      `${result.aplicado ? "Actualizado" : "Vista previa"}: ${result.cantidad} producto(s) de ${result.categoria}, ganancia ${result.ganancia}%.`;
+
+    table($("#tabla-recalculo"), [
+      { key: "codigo", label: "Código" },
+      { key: "nombre", label: "Producto" },
+      { key: "precio_compra", label: "Compra", format: money },
+      { key: "anterior", label: "Venta anterior", format: money },
+      { key: "nuevo", label: "Venta nueva", format: money },
+      { key: "diferencia", label: "Diferencia", format: money },
+    ], result.cambios || []);
+
+    if (aplicar) await loadProductos();
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+$("#preview-recalculo").onclick = () => recalcularCategoria(false);
+$("#recalcular-categoria-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  await recalcularCategoria(true);
 };
 
 $("#cliente-form").onsubmit = async (ev) => {
@@ -624,6 +869,7 @@ $("#print-report").onclick = () => {
 async function previewPrecios(aplicar) {
   const data = Object.fromEntries(new FormData($("#precios-form")));
   data.redondear = $("#precios-form").elements.redondear.checked ? 1 : 0;
+  data.ganancia = data.porcentaje;
   data.aplicar = aplicar ? 1 : 0;
   if (aplicar && !confirm("Aplicar cambios de precios?")) return;
   const result = await api("/api/precios/categoria", { method: "POST", body: JSON.stringify(data) });

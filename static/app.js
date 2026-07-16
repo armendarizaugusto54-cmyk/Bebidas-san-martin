@@ -34,6 +34,43 @@ function fillForm(selector, row) {
   form.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function currentProduct() {
+  return state.productos.find((x) => String(x.id) === String($("#venta-producto").value));
+}
+
+function setVentaProduct(product) {
+  if (!product) return;
+  $("#venta-producto").value = product.id;
+  $("#venta-producto-nombre").value = `${product.codigo || ""} - ${product.nombre} - ${money(product.precio_venta)} | Stock: ${product.stock ?? 0}`;
+  $("#venta-cantidad").focus();
+}
+
+function renderProductSearch() {
+  const q = $("#producto-modal-search").value.trim().toLowerCase();
+  const productos = state.productos
+    .filter((p) => [p.codigo, p.nombre, p.marca, p.categoria].join(" ").toLowerCase().includes(q))
+    .slice(0, 80);
+  table($("#producto-modal-table"), [
+    { key: "codigo", label: "Codigo" },
+    { key: "nombre", label: "Producto" },
+    { key: "marca", label: "Marca" },
+    { key: "precio_venta", label: "Precio", format: money },
+    { key: "stock", label: "Stock" },
+  ], productos, (r) => `<button type="button" data-select-product="${r.id}">Elegir</button>`);
+}
+
+function openProductSearch() {
+  if (state.current !== "ventas") return;
+  $("#producto-modal").hidden = false;
+  $("#producto-modal-search").value = "";
+  renderProductSearch();
+  $("#producto-modal-search").focus();
+}
+
+function closeProductSearch() {
+  $("#producto-modal").hidden = true;
+}
+
 async function loadOptions() {
   state.options = await api("/api/options");
   state.productos = state.options.productos || [];
@@ -42,6 +79,7 @@ async function loadOptions() {
   $("#precios-form").elements.categoria_id.innerHTML = [`<option value="__all__">Todas</option>`, `<option value="__none__">Sin categoria</option>`, ...(state.options.categorias || []).map((c) => `<option value="${c.id}">${c.nombre}</option>`)].join("");
   $("#venta-form").elements.cliente_id.innerHTML = [`<option value="">Consumidor final</option>`, ...(state.options.clientes || []).map((c) => `<option value="${c.id}">${c.nombre} (${money(c.saldo)})</option>`)].join("");
   $("#venta-producto").innerHTML = state.productos.map((p) => `<option value="${p.id}">${p.codigo} - ${p.nombre} - ${money(p.precio_venta)}</option>`).join("");
+  if (state.current === "ventas" && state.productos.length && !currentProduct()) setVentaProduct(state.productos[0]);
 }
 
 async function loadDashboard() {
@@ -138,11 +176,17 @@ function renderTicket() {
     { key: "precio", label: "Precio", format: money },
     { key: "subtotal", label: "Subtotal", format: money },
   ], state.ticket, (r) => `<button class="danger" data-remove="${r.producto_id}">Quitar</button>`);
-  $("#ticket-total").textContent = `TOTAL: ${money(ticketTotal())}`;
+  const total = ticketTotal();
+  const items = state.ticket.reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+  $("#ticket-total").textContent = `TOTAL: ${money(total)}`;
+  $("#ticket-total-inline").textContent = money(total);
+  $("#venta-total-top").textContent = money(total);
+  $("#ticket-items").textContent = `${items} producto${items === 1 ? "" : "s"}`;
 }
 
 async function loadVentas() {
   await loadOptions();
+  if (state.productos.length) setVentaProduct(currentProduct() || state.productos[0]);
   const data = await api("/api/ventas");
   table($("#tabla-ventas"), [
     { key: "id", label: "Nro" },
@@ -245,6 +289,11 @@ document.addEventListener("click", async (ev) => {
     state.ticket = state.ticket.filter((item) => String(item.producto_id) !== ev.target.dataset.remove);
     renderTicket();
   }
+  if (ev.target.dataset.selectProduct) {
+    const product = state.productos.find((p) => String(p.id) === String(ev.target.dataset.selectProduct));
+    setVentaProduct(product);
+    closeProductSearch();
+  }
   if (ev.target.dataset.printTicket) {
     const data = await api(`/api/ventas/${ev.target.dataset.printTicket}`);
     printVenta("Ticket", data, false);
@@ -253,6 +302,22 @@ document.addEventListener("click", async (ev) => {
 });
 
 $("#search").addEventListener("input", refresh);
+$("#buscar-producto").addEventListener("click", openProductSearch);
+$("#cerrar-producto-modal").addEventListener("click", closeProductSearch);
+$("#producto-modal-search").addEventListener("input", renderProductSearch);
+$("#producto-modal").addEventListener("click", (ev) => {
+  if (ev.target.id === "producto-modal") closeProductSearch();
+});
+document.addEventListener("keydown", (ev) => {
+  if (state.current !== "ventas") return;
+  if (ev.key === "F3") {
+    ev.preventDefault();
+    openProductSearch();
+  }
+  if (ev.key === "Escape" && !$("#producto-modal").hidden) {
+    closeProductSearch();
+  }
+});
 
 $("#producto-form").onsubmit = async (ev) => {
   ev.preventDefault();
@@ -285,10 +350,16 @@ $("#print-cuenta").onclick = () => {
 };
 
 $("#add-item").onclick = () => {
-  const p = state.productos.find((x) => String(x.id) === $("#venta-producto").value);
+  const p = currentProduct();
   if (!p) return;
   const cantidad = Number($("#venta-cantidad").value || 1);
   if (cantidad <= 0) return alert("Cantidad invalida.");
+  const yaCargado = state.ticket
+    .filter((i) => String(i.producto_id) === String(p.id))
+    .reduce((sum, item) => sum + Number(item.cantidad || 0), 0);
+  if (yaCargado + cantidad > Number(p.stock || 0)) {
+    return alert(`Stock insuficiente. Disponible: ${p.stock}`);
+  }
   const found = state.ticket.find((i) => String(i.producto_id) === String(p.id));
   if (found) {
     found.cantidad += cantidad;
@@ -296,6 +367,8 @@ $("#add-item").onclick = () => {
   } else {
     state.ticket.push({ producto_id: p.id, nombre: p.nombre, cantidad, precio: Number(p.precio_venta || 0), subtotal: cantidad * Number(p.precio_venta || 0) });
   }
+  $("#venta-cantidad").value = 1;
+  $("#venta-cantidad").focus();
   renderTicket();
 };
 
@@ -376,32 +449,7 @@ $("#crear-backup").onclick = async () => {
   await api("/api/backup", { method: "POST", body: "{}" });
   await loadHerramientas();
 };
-document.addEventListener("keydown", (ev) => {
-  if (state.current !== "ventas") return;
-  if (ev.key !== "F3") return;
 
-  ev.preventDefault();
-
-  const q = prompt("Buscar producto por codigo, nombre o marca:");
-  if (!q) return;
-
-  const texto = q.trim().toLowerCase();
-  const encontrados = state.productos.filter((p) =>
-    [p.codigo, p.nombre, p.marca, p.categoria]
-      .join(" ")
-      .toLowerCase()
-      .includes(texto)
-  );
-
-  if (!encontrados.length) {
-    alert("No se encontraron productos.");
-    return;
-  }
-
-  const elegido = encontrados[0];
-  $("#venta-producto").value = elegido.id;
-  $("#venta-cantidad").focus();
-});
 (async function init() {
   const me = await api("/api/me");
   state.user = me.user;

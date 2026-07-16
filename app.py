@@ -14,24 +14,7 @@ DB_PATH = os.path.join(BASE_DIR, "bebidas.db")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("BEBIDAS_SECRET", "cambiar-esta-clave")
-app.config.update(
-    SESSION_COOKIE_HTTPONLY=True,
-    SESSION_COOKIE_SAMESITE="Lax",
-)
-
-TABLE_MODULES = {
-    "productos": "Productos",
-    "clientes": "Clientes",
-    "categorias": "Categorias",
-    "marcas": "Marcas",
-    "proveedores": "Proveedores",
-    "compras": "Compras",
-    "ventas": "Ventas",
-    "caja": "Caja",
-    "reportes": "Reportes",
-    "configuracion": "Configuracion",
-    "usuarios": "Usuarios",
-}
+app.config.update(SESSION_COOKIE_HTTPONLY=True, SESSION_COOKIE_SAMESITE="Lax")
 
 
 def db():
@@ -42,7 +25,7 @@ def db():
 
 def rows(sql, params=()):
     with db() as conn:
-        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
 def one(sql, params=()):
@@ -58,28 +41,16 @@ def execute(sql, params=()):
         return cur.lastrowid
 
 
-def ensure_schema():
-    with db() as conn:
-        cols = {row["name"] for row in conn.execute("PRAGMA table_info(clientes)")}
-        if "whatsapp" not in cols:
-            conn.execute("ALTER TABLE clientes ADD COLUMN whatsapp TEXT")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS auditoria (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fecha TEXT,
-                usuario TEXT,
-                accion TEXT,
-                detalle TEXT
-            )
-            """
-        )
-        conn.commit()
+def money(value):
+    try:
+        return float(str(value or 0).replace(",", "."))
+    except ValueError:
+        return 0.0
 
 
 def hash_password(password):
     salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000).hex()
     return f"pbkdf2_sha256${salt}${digest}"
 
 
@@ -90,7 +61,7 @@ def verify_password(password, stored):
             _, salt, digest = stored.split("$", 2)
         except ValueError:
             return False
-        candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
+        candidate = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000).hex()
         return hmac.compare_digest(candidate, digest)
     return hmac.compare_digest(password, stored)
 
@@ -99,68 +70,151 @@ def audit(action, detail=""):
     user = session.get("user") or {}
     execute(
         "INSERT INTO auditoria(fecha,usuario,accion,detalle) VALUES(?,?,?,?)",
-        (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            user.get("usuario", "sistema"),
-            action,
-            str(detail or "")[:500],
-        ),
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user.get("usuario", "sistema"), action, str(detail)[:500]),
     )
 
 
+def ensure_schema():
+    with db() as conn:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                usuario TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                rol TEXT NOT NULL DEFAULT 'CAJERO',
+                activo INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS categorias (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT UNIQUE NOT NULL,
+                ganancia REAL DEFAULT 30
+            );
+            CREATE TABLE IF NOT EXISTS productos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo TEXT UNIQUE NOT NULL,
+                nombre TEXT NOT NULL,
+                categoria_id INTEGER,
+                marca TEXT,
+                precio_compra REAL DEFAULT 0,
+                precio_venta REAL DEFAULT 0,
+                stock REAL DEFAULT 0,
+                stock_minimo REAL DEFAULT 0,
+                activo INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS clientes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                telefono TEXT,
+                whatsapp TEXT,
+                direccion TEXT,
+                localidad TEXT,
+                cuit TEXT,
+                email TEXT,
+                limite_credito REAL DEFAULT 0,
+                saldo REAL DEFAULT 0,
+                activo INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS ventas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                cliente_id INTEGER,
+                tipo TEXT,
+                total REAL,
+                usuario TEXT
+            );
+            CREATE TABLE IF NOT EXISTS venta_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                venta_id INTEGER,
+                producto_id INTEGER,
+                cantidad REAL,
+                precio REAL,
+                subtotal REAL
+            );
+            CREATE TABLE IF NOT EXISTS cuenta_corriente (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                cliente_id INTEGER,
+                fecha TEXT,
+                comprobante TEXT,
+                concepto TEXT,
+                debe REAL DEFAULT 0,
+                haber REAL DEFAULT 0,
+                saldo REAL DEFAULT 0,
+                observaciones TEXT
+            );
+            CREATE TABLE IF NOT EXISTS caja (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                estado TEXT DEFAULT 'ABIERTA',
+                apertura REAL DEFAULT 0,
+                efectivo REAL DEFAULT 0,
+                transferencia REAL DEFAULT 0,
+                debito REAL DEFAULT 0,
+                credito REAL DEFAULT 0,
+                posnet REAL DEFAULT 0,
+                cuenta_corriente REAL DEFAULT 0,
+                ingresos REAL DEFAULT 0,
+                gastos REAL DEFAULT 0,
+                cierre REAL DEFAULT 0,
+                diferencia REAL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS caja_movimientos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caja_id INTEGER,
+                fecha TEXT,
+                tipo TEXT,
+                descripcion TEXT,
+                importe REAL
+            );
+            CREATE TABLE IF NOT EXISTS caja_arqueos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caja_id INTEGER,
+                fecha TEXT,
+                usuario TEXT,
+                efectivo_sistema REAL,
+                efectivo_contado REAL,
+                transferencia_sistema REAL,
+                transferencia_contado REAL,
+                debito_sistema REAL,
+                debito_contado REAL,
+                credito_sistema REAL,
+                credito_contado REAL,
+                posnet_sistema REAL,
+                posnet_contado REAL,
+                total_sistema REAL,
+                total_contado REAL,
+                diferencia REAL,
+                observaciones TEXT,
+                corregido INTEGER DEFAULT 0,
+                usuario_correccion TEXT,
+                motivo_correccion TEXT
+            );
+            CREATE TABLE IF NOT EXISTS auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                usuario TEXT,
+                accion TEXT,
+                detalle TEXT
+            );
+            """
+        )
+        if not conn.execute("SELECT id FROM usuarios LIMIT 1").fetchone():
+            conn.execute(
+                "INSERT INTO usuarios(nombre,usuario,password,rol,activo) VALUES(?,?,?,?,1)",
+                ("Selene", "selene", hash_password("1234"), "ADMIN"),
+            )
+            conn.execute(
+                "INSERT INTO usuarios(nombre,usuario,password,rol,activo) VALUES(?,?,?,?,1)",
+                ("Vale", "vale", hash_password("12345"), "CAJERO"),
+            )
+        if not conn.execute("SELECT id FROM categorias LIMIT 1").fetchone():
+            conn.execute("INSERT INTO categorias(nombre,ganancia) VALUES('Bebidas',30)")
+            conn.execute("INSERT INTO categorias(nombre,ganancia) VALUES('Cervezas',35)")
+        conn.commit()
+
+
 ensure_schema()
-
-
-def money(value):
-    try:
-        return float(str(value or 0).replace(",", "."))
-    except ValueError:
-        return 0.0
-
-
-def require_login():
-    return "user" in session
-
-
-def permissions_for(user):
-    modules = [
-        "Dashboard",
-        "Ventas",
-        "Productos",
-        "Clientes",
-        "Caja",
-        "Categorias",
-        "Marcas",
-        "Proveedores",
-        "Compras",
-        "Reportes",
-        "Usuarios",
-        "Configuracion",
-    ]
-    if user["rol"] == "ADMIN":
-        return {
-            module: {"ver": 1, "agregar": 1, "modificar": 1, "eliminar": 1}
-            for module in modules
-        }
-    perms = {
-        module: {"ver": 0, "agregar": 0, "modificar": 0, "eliminar": 0}
-        for module in modules
-    }
-    for row in rows(
-        """
-        SELECT modulo,ver,agregar,modificar,eliminar
-        FROM permisos
-        WHERE usuario_id=?
-        """,
-        (user["id"],),
-    ):
-        perms[row["modulo"]] = {
-            "ver": int(row["ver"] or 0),
-            "agregar": int(row["agregar"] or 0),
-            "modificar": int(row["modificar"] or 0),
-            "eliminar": int(row["eliminar"] or 0),
-        }
-    return perms
 
 
 def can(module, action="ver"):
@@ -169,7 +223,9 @@ def can(module, action="ver"):
         return False
     if user["rol"] == "ADMIN":
         return True
-    return permissions_for(user).get(module, {}).get(action, 0) == 1
+    if action in {"ver", "agregar"} and module in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}:
+        return True
+    return False
 
 
 def forbidden():
@@ -178,9 +234,11 @@ def forbidden():
 
 @app.before_request
 def guard():
-    public = {"login", "static"}
-    if request.endpoint not in public and not require_login():
+    if request.endpoint in {"login", "static"}:
+        return None
+    if "user" not in session:
         return redirect(url_for("login"))
+    return None
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -189,328 +247,220 @@ def login():
     if request.method == "POST":
         usuario = request.form.get("usuario", "").strip()
         password = request.form.get("password", "")
-        user = one(
-            "SELECT * FROM usuarios WHERE usuario=? AND activo=1",
-            (usuario,),
-        )
+        user = one("SELECT * FROM usuarios WHERE usuario=? AND activo=1", (usuario,))
         if user and verify_password(password, user["password"]):
-            session["user"] = {
-                "id": user["id"],
-                "nombre": user["nombre"],
-                "usuario": user["usuario"],
-                "rol": user["rol"],
-            }
-            if not str(user["password"] or "").startswith("pbkdf2_sha256$"):
-                execute("UPDATE usuarios SET password=? WHERE id=?", (hash_password(password), user["id"]))
+            session["user"] = {"id": user["id"], "nombre": user["nombre"], "usuario": user["usuario"], "rol": user["rol"]}
             audit("login", "Ingreso correcto")
             return redirect(url_for("index"))
-        audit("login_fallido", f"Usuario: {usuario}")
+        audit("login_fallido", usuario)
         error = "Usuario o contrasena incorrectos."
     return render_template("login.html", error=error)
 
 
-@app.route("/logout")
+@app.get("/logout")
 def logout():
+    audit("logout", "Salida")
     session.clear()
     return redirect(url_for("login"))
 
 
-@app.route("/")
+@app.get("/")
 def index():
     return render_template("index.html", user=session["user"])
 
 
 @app.get("/api/me")
 def me():
-    return jsonify({"user": session["user"], "permisos": permissions_for(session["user"])})
-
-
-@app.get("/api/dashboard")
-def dashboard():
-    if not can("Dashboard"):
-        return forbidden()
-    ventas_hoy = one(
-        """
-        SELECT COUNT(*) cantidad, COALESCE(SUM(total),0) total
-        FROM ventas
-        WHERE date(fecha)=date('now','localtime')
-        """
-    )
-    caja_actual = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
-    ultimo_cierre = one(
-        """
-        SELECT id,fecha,cierre,diferencia
-        FROM caja
-        WHERE estado='CERRADA'
-        ORDER BY id DESC
-        LIMIT 1
-        """
-    )
-    medios = rows(
-        """
-        SELECT tipo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
-        FROM ventas
-        WHERE date(fecha)=date('now','localtime')
-        GROUP BY tipo
-        ORDER BY total DESC
-        """
-    )
-    top_productos = rows(
-        """
-        SELECT p.codigo,p.nombre,COALESCE(SUM(d.cantidad),0) cantidad,
-               COALESCE(SUM(d.subtotal),0) total
-        FROM detalle_ventas d
-        JOIN ventas v ON v.id=d.venta_id
-        JOIN productos p ON p.id=d.producto_id
-        WHERE date(v.fecha)=date('now','localtime')
-        GROUP BY p.id,p.codigo,p.nombre
-        ORDER BY cantidad DESC,total DESC
-        LIMIT 6
-        """
-    )
-    ultimas_ventas = rows(
-        """
-        SELECT v.id,v.fecha,COALESCE(c.nombre,'Consumidor final') cliente,
-               v.tipo,v.total,v.usuario
-        FROM ventas v
-        LEFT JOIN clientes c ON c.id=v.cliente_id
-        ORDER BY v.id DESC
-        LIMIT 8
-        """
-    )
-    return jsonify(
-        {
-            "productos": one("SELECT COUNT(*) cantidad FROM productos")["cantidad"],
-            "clientes": one("SELECT COUNT(*) cantidad FROM clientes WHERE activo=1")[
-                "cantidad"
-            ],
-            "ventasHoy": ventas_hoy["total"],
-            "ventasCantidad": ventas_hoy["cantidad"],
-            "ticketPromedio": (
-                ventas_hoy["total"] / ventas_hoy["cantidad"]
-                if ventas_hoy["cantidad"]
-                else 0
-            ),
-            "stockBajo": one(
-                "SELECT COUNT(*) cantidad FROM productos WHERE stock <= stock_minimo"
-            )["cantidad"],
-            "inventario": one(
-                "SELECT COALESCE(SUM(stock * precio_compra),0) total FROM productos"
-            )["total"],
-            "caja": caja_actual,
-            "ultimoCierre": ultimo_cierre,
-            "medios": medios,
-            "topProductos": top_productos,
-            "ultimasVentas": ultimas_ventas,
-            "bajos": rows(
-                """
-                SELECT codigo,nombre,marca,stock,stock_minimo
-                FROM productos
-                WHERE stock <= stock_minimo
-                ORDER BY stock ASC, nombre
-                LIMIT 12
-                """
-            ),
-        }
-    )
+    return jsonify({"user": session["user"]})
 
 
 @app.get("/api/options")
 def options():
-    allowed = {
-        "categorias": can("Categorias") or can("Productos") or can("Ventas") or can("Compras"),
-        "marcas": can("Marcas") or can("Productos") or can("Ventas") or can("Compras"),
-        "clientes": can("Clientes") or can("Ventas"),
-        "proveedores": can("Proveedores") or can("Productos") or can("Compras"),
-        "productos": can("Productos") or can("Ventas") or can("Compras"),
-    }
-    result = {}
-    if allowed["categorias"]:
-        result["categorias"] = rows("SELECT id,nombre,ganancia FROM categorias ORDER BY nombre")
-    if allowed["marcas"]:
-        result["marcas"] = rows("SELECT id,nombre FROM marcas ORDER BY nombre")
-    if allowed["clientes"]:
-        result["clientes"] = rows(
-            "SELECT id,nombre,saldo FROM clientes WHERE activo=1 ORDER BY nombre"
-        )
-    if allowed["proveedores"]:
-        result["proveedores"] = rows("SELECT id,nombre FROM proveedores ORDER BY nombre")
-    if allowed["productos"]:
-        result["productos"] = rows(
-            """
-            SELECT p.*, c.nombre categoria_nombre
-            FROM productos p
-            LEFT JOIN categorias c ON c.id=p.categoria_id
-            ORDER BY p.nombre
-            """
-        )
-    return jsonify(result)
-
-
-@app.get("/api/<table>")
-def list_table(table):
-    queries = {
-        "productos": """
-            SELECT p.*, c.nombre categoria_nombre
-            FROM productos p
-            LEFT JOIN categorias c ON c.id=p.categoria_id
-            ORDER BY p.nombre
-        """,
-        "clientes": "SELECT * FROM clientes ORDER BY nombre",
-        "categorias": "SELECT * FROM categorias ORDER BY nombre",
-        "marcas": "SELECT * FROM marcas ORDER BY nombre",
-        "proveedores": "SELECT * FROM proveedores ORDER BY nombre",
-        "compras": """
-            SELECT c.*, p.nombre proveedor
-            FROM compras c
-            LEFT JOIN proveedores p ON p.id=c.proveedor_id
-            ORDER BY c.id DESC
-            LIMIT 100
-        """,
-        "ventas": """
-            SELECT v.*, c.nombre cliente
-            FROM ventas v
-            LEFT JOIN clientes c ON c.id=v.cliente_id
-            ORDER BY v.id DESC
-            LIMIT 100
-        """,
-        "caja": "SELECT * FROM caja ORDER BY id DESC LIMIT 100",
-        "usuarios": "SELECT id,nombre,usuario,rol,activo FROM usuarios ORDER BY nombre",
-    }
-    if table not in queries:
-        return jsonify({"error": "Tabla no disponible"}), 404
-    module = TABLE_MODULES[table]
-    if not can(module):
-        return forbidden()
-    return jsonify(rows(queries[table]))
-
-
-@app.post("/api/productos")
-def save_producto():
-    data = request.json or {}
-    producto_id = data.get("id")
-    if not can("Productos", "modificar" if producto_id else "agregar"):
-        return forbidden()
-    categoria_id = data.get("categoria_id") or None
-    categoria = one("SELECT nombre, ganancia FROM categorias WHERE id=?", (categoria_id,))
-    ganancia = money(data.get("ganancia", categoria["ganancia"] if categoria else 30))
-    compra = money(data.get("precio_compra"))
-    venta = money(data.get("precio_venta")) or compra + (compra * ganancia / 100)
-    params = (
-        data.get("codigo", "").strip(),
-        data.get("nombre", "").strip(),
-        categoria["nombre"] if categoria else "",
-        data.get("marca", "").strip(),
-        data.get("proveedor_id") or None,
-        compra,
-        venta,
-        money(data.get("stock")),
-        money(data.get("stock_minimo")),
-        data.get("ubicacion", "").strip(),
-        ganancia,
-        categoria_id,
-    )
-    if not params[0] or not params[1]:
-        return jsonify({"error": "Codigo y nombre son obligatorios."}), 400
-    if producto_id:
-        execute(
-            """
-            UPDATE productos
-            SET codigo=?, nombre=?, categoria=?, marca=?, proveedor_id=?,
-                precio_compra=?, precio_venta=?, stock=?, stock_minimo=?,
-                ubicacion=?, ganancia=?, categoria_id=?
-            WHERE id=?
-            """,
-            params + (producto_id,),
-        )
-    else:
-        execute(
-            """
-            INSERT INTO productos
-            (codigo,nombre,categoria,marca,proveedor_id,precio_compra,precio_venta,
-             stock,stock_minimo,ubicacion,ganancia,categoria_id)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            params,
-        )
-    return jsonify({"ok": True})
-
-
-@app.post("/api/productos/actualizar-precios")
-def actualizar_precios_categoria():
-    if not can("Productos", "modificar"):
-        return forbidden()
-    data = request.json or {}
-    categoria_id = data.get("categoria_id")
-    porcentaje = money(data.get("porcentaje"))
-    redondear = int(data.get("redondear", 1) or 0) == 1
-    aplicar = int(data.get("aplicar", 0) or 0) == 1
-    if not categoria_id:
-        return jsonify({"error": "Seleccione una categoria."}), 400
-    if porcentaje == 0:
-        return jsonify({"error": "Ingrese un porcentaje distinto de cero."}), 400
-    params = []
-    where = "estado='ACTIVO'"
-    if categoria_id == "__all__":
-        categoria_nombre = "Todas las categorias"
-    elif categoria_id == "__none__":
-        categoria_nombre = "Sin categoria"
-        where += " AND categoria_id IS NULL"
-    else:
-        categoria = one("SELECT nombre FROM categorias WHERE id=?", (categoria_id,))
-        if not categoria:
-            return jsonify({"error": "Categoria inexistente."}), 404
-        categoria_nombre = categoria["nombre"]
-        where += " AND categoria_id=?"
-        params.append(categoria_id)
-    productos = rows(
-        f"""
-        SELECT id,codigo,nombre,precio_venta
-        FROM productos
-        WHERE {where}
-        ORDER BY nombre
-        """,
-        params,
-    )
-    cambios = []
-    for producto in productos:
-        anterior = money(producto["precio_venta"])
-        nuevo = anterior + (anterior * porcentaje / 100)
-        if redondear:
-            nuevo = round(nuevo)
-        else:
-            nuevo = round(nuevo, 2)
-        cambios.append({**producto, "precio_anterior": anterior, "precio_nuevo": nuevo})
-    if aplicar:
-        with db() as conn:
-            for item in cambios:
-                conn.execute(
-                    "UPDATE productos SET precio_venta=? WHERE id=?",
-                    (item["precio_nuevo"], item["id"]),
-                )
-            conn.commit()
-        audit(
-            "precios_actualizados",
-            f"Categoria {categoria_nombre} porcentaje {porcentaje}. Productos {len(cambios)}",
-        )
     return jsonify(
         {
-            "ok": True,
-            "aplicado": aplicar,
-            "categoria": categoria_nombre,
-            "cantidad": len(cambios),
-            "cambios": cambios[:80],
+            "categorias": rows("SELECT * FROM categorias ORDER BY nombre"),
+            "clientes": rows("SELECT id,nombre,saldo FROM clientes WHERE activo=1 ORDER BY nombre"),
+            "productos": rows(
+                """
+                SELECT p.*, c.nombre categoria
+                FROM productos p
+                LEFT JOIN categorias c ON c.id=p.categoria_id
+                WHERE p.activo=1
+                ORDER BY p.nombre
+                """
+            ),
         }
     )
 
 
+@app.get("/api/dashboard")
+def dashboard():
+    today = datetime.now().strftime("%Y-%m-%d")
+    ventas = one("SELECT COUNT(*) cantidad, COALESCE(SUM(total),0) total FROM ventas WHERE date(fecha)=date(?)", (today,))
+    caja = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
+    return jsonify(
+        {
+            "ventas": ventas,
+            "productos": one("SELECT COUNT(*) cantidad FROM productos WHERE activo=1")["cantidad"],
+            "clientes": one("SELECT COUNT(*) cantidad FROM clientes WHERE activo=1")["cantidad"],
+            "stock_bajo": one("SELECT COUNT(*) cantidad FROM productos WHERE activo=1 AND stock<=stock_minimo")["cantidad"],
+            "caja": caja or {},
+            "top": rows(
+                """
+                SELECT p.nombre, SUM(i.cantidad) cantidad, SUM(i.subtotal) total
+                FROM venta_items i
+                JOIN ventas v ON v.id=i.venta_id
+                JOIN productos p ON p.id=i.producto_id
+                WHERE date(v.fecha)=date(?)
+                GROUP BY p.id
+                ORDER BY cantidad DESC
+                LIMIT 5
+                """,
+                (today,),
+            ),
+        }
+    )
+
+
+@app.get("/api/productos")
+def productos():
+    if not can("Productos"):
+        return forbidden()
+    return jsonify(rows(
+        """
+        SELECT p.*, c.nombre categoria
+        FROM productos p
+        LEFT JOIN categorias c ON c.id=p.categoria_id
+        WHERE p.activo=1
+        ORDER BY p.nombre
+        """
+    ))
+
+
+@app.post("/api/productos")
+def save_producto():
+    if not can("Productos", "agregar"):
+        return forbidden()
+    data = request.json or {}
+    producto_id = data.get("id")
+    codigo = data.get("codigo", "").strip()
+    nombre = data.get("nombre", "").strip()
+    if not codigo or not nombre:
+        return jsonify({"error": "Codigo y nombre son obligatorios."}), 400
+    params = (
+        codigo,
+        nombre,
+        data.get("categoria_id") or None,
+        data.get("marca", "").strip(),
+        money(data.get("precio_compra")),
+        money(data.get("precio_venta")),
+        money(data.get("stock")),
+        money(data.get("stock_minimo")),
+    )
+    if producto_id:
+        execute(
+            """
+            UPDATE productos
+            SET codigo=?,nombre=?,categoria_id=?,marca=?,precio_compra=?,precio_venta=?,stock=?,stock_minimo=?
+            WHERE id=?
+            """,
+            params + (producto_id,),
+        )
+        audit("producto_editado", nombre)
+    else:
+        execute(
+            """
+            INSERT INTO productos(codigo,nombre,categoria_id,marca,precio_compra,precio_venta,stock,stock_minimo)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,
+            params,
+        )
+        audit("producto_creado", nombre)
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/productos/<int:producto_id>")
+def delete_producto(producto_id):
+    if not can("Productos", "eliminar"):
+        return forbidden()
+    execute("UPDATE productos SET activo=0 WHERE id=?", (producto_id,))
+    audit("producto_borrado", producto_id)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/precios/categoria")
+def precios_categoria():
+    if not can("Productos", "agregar"):
+        return forbidden()
+    data = request.json or {}
+    categoria_id = data.get("categoria_id")
+    porcentaje = money(data.get("porcentaje"))
+    aplicar = int(data.get("aplicar", 0) or 0) == 1
+    redondear = int(data.get("redondear", 1) or 0) == 1
+    if porcentaje == 0:
+        return jsonify({"error": "Ingrese porcentaje distinto de cero."}), 400
+    params = []
+    where = "activo=1"
+    label = "Todas"
+    if categoria_id and categoria_id not in {"__all__", "__none__"}:
+        where += " AND categoria_id=?"
+        params.append(categoria_id)
+        cat = one("SELECT nombre FROM categorias WHERE id=?", (categoria_id,))
+        label = cat["nombre"] if cat else "Categoria"
+    elif categoria_id == "__none__":
+        where += " AND categoria_id IS NULL"
+        label = "Sin categoria"
+    productos = rows(f"SELECT id,codigo,nombre,precio_venta FROM productos WHERE {where} ORDER BY nombre", params)
+    cambios = []
+    for p in productos:
+        anterior = money(p["precio_venta"])
+        nuevo = anterior + anterior * porcentaje / 100
+        nuevo = round(nuevo) if redondear else round(nuevo, 2)
+        cambios.append({**p, "anterior": anterior, "nuevo": nuevo})
+    if aplicar:
+        with db() as conn:
+            for item in cambios:
+                conn.execute("UPDATE productos SET precio_venta=? WHERE id=?", (item["nuevo"], item["id"]))
+            conn.commit()
+        audit("precios_actualizados", f"{label} {porcentaje}% {len(cambios)} productos")
+    return jsonify({"categoria": label, "cantidad": len(cambios), "cambios": cambios[:100], "aplicado": aplicar})
+
+
+@app.get("/api/categorias")
+def categorias():
+    return jsonify(rows("SELECT * FROM categorias ORDER BY nombre"))
+
+
+@app.post("/api/categorias")
+def save_categoria():
+    data = request.json or {}
+    nombre = data.get("nombre", "").strip()
+    if not nombre:
+        return jsonify({"error": "Nombre obligatorio."}), 400
+    if data.get("id"):
+        execute("UPDATE categorias SET nombre=?, ganancia=? WHERE id=?", (nombre, money(data.get("ganancia", 30)), data["id"]))
+    else:
+        execute("INSERT INTO categorias(nombre,ganancia) VALUES(?,?)", (nombre, money(data.get("ganancia", 30))))
+    return jsonify({"ok": True})
+
+
+@app.get("/api/clientes")
+def clientes():
+    if not can("Clientes"):
+        return forbidden()
+    return jsonify(rows("SELECT * FROM clientes WHERE activo=1 ORDER BY nombre"))
+
+
 @app.post("/api/clientes")
 def save_cliente():
-    data = request.json or {}
-    if not can("Clientes", "modificar" if data.get("id") else "agregar"):
+    if not can("Clientes", "agregar"):
         return forbidden()
+    data = request.json or {}
+    nombre = data.get("nombre", "").strip()
+    if not nombre:
+        return jsonify({"error": "Nombre obligatorio."}), 400
     params = (
-        data.get("nombre", "").strip(),
+        nombre,
         data.get("telefono", "").strip(),
         data.get("whatsapp", "").strip(),
         data.get("direccion", "").strip(),
@@ -519,14 +469,11 @@ def save_cliente():
         data.get("email", "").strip(),
         money(data.get("limite_credito")),
     )
-    if not params[0]:
-        return jsonify({"error": "El nombre es obligatorio."}), 400
     if data.get("id"):
         execute(
             """
             UPDATE clientes
-            SET nombre=?, telefono=?, whatsapp=?, direccion=?, localidad=?,
-                cuit=?, email=?, limite_credito=?
+            SET nombre=?,telefono=?,whatsapp=?,direccion=?,localidad=?,cuit=?,email=?,limite_credito=?
             WHERE id=?
             """,
             params + (data["id"],),
@@ -534,8 +481,7 @@ def save_cliente():
     else:
         execute(
             """
-            INSERT INTO clientes
-            (nombre,telefono,whatsapp,direccion,localidad,cuit,email,limite_credito,saldo,activo)
+            INSERT INTO clientes(nombre,telefono,whatsapp,direccion,localidad,cuit,email,limite_credito,saldo,activo)
             VALUES(?,?,?,?,?,?,?,?,0,1)
             """,
             params,
@@ -544,229 +490,54 @@ def save_cliente():
 
 
 @app.get("/api/clientes/<int:cliente_id>/cuenta")
-def cliente_cuenta(cliente_id):
-    if not can("Clientes"):
-        return forbidden()
+def cuenta(cliente_id):
     cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
     if not cliente:
         return jsonify({"error": "Cliente inexistente."}), 404
-    movimientos = rows(
-        """
-        SELECT id,fecha,comprobante,concepto,debe,haber,saldo,observaciones
-        FROM cuenta_corriente
-        WHERE cliente_id=?
-        ORDER BY id DESC
-        LIMIT 120
-        """,
-        (cliente_id,),
-    )
-    resumen = one(
-        """
-        SELECT COUNT(*) movimientos,
-               COALESCE(SUM(debe),0) debe,
-               COALESCE(SUM(haber),0) haber
-        FROM cuenta_corriente
-        WHERE cliente_id=?
-        """,
-        (cliente_id,),
-    )
-    return jsonify({"cliente": cliente, "movimientos": movimientos, "resumen": resumen})
+    movs = rows("SELECT * FROM cuenta_corriente WHERE cliente_id=? ORDER BY id DESC", (cliente_id,))
+    resumen = one("SELECT COALESCE(SUM(debe),0) debe, COALESCE(SUM(haber),0) haber, COUNT(*) movimientos FROM cuenta_corriente WHERE cliente_id=?", (cliente_id,))
+    return jsonify({"cliente": cliente, "movimientos": movs, "resumen": resumen})
 
 
-@app.post("/api/clientes/<int:cliente_id>/cuenta/pago")
-def cliente_cuenta_pago(cliente_id):
-    if not can("Clientes", "modificar"):
+@app.post("/api/clientes/<int:cliente_id>/pago")
+def pago_cliente(cliente_id):
+    if not can("Clientes", "agregar"):
         return forbidden()
     data = request.json or {}
     importe = money(data.get("importe"))
     if importe <= 0:
-        return jsonify({"error": "Ingrese un importe mayor a cero."}), 400
+        return jsonify({"error": "Importe invalido."}), 400
     cliente = one("SELECT * FROM clientes WHERE id=?", (cliente_id,))
-    if not cliente:
-        return jsonify({"error": "Cliente inexistente."}), 404
-    saldo = money(cliente.get("saldo"))
-    nuevo = saldo - importe
-    comprobante = data.get("comprobante", "").strip() or f"PAGO-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-    observaciones = data.get("observaciones", "").strip()
+    saldo = money(cliente["saldo"]) - importe
     with db() as conn:
-        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (nuevo, cliente_id))
+        conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo, cliente_id))
         conn.execute(
             """
-            INSERT INTO cuenta_corriente
-            (cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+            INSERT INTO cuenta_corriente(cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
             VALUES(?,?,?,?,?,?,?,?)
             """,
-            (
-                cliente_id,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                comprobante,
-                "PAGO",
-                0,
-                importe,
-                nuevo,
-                observaciones,
-            ),
+            (cliente_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), data.get("comprobante", ""), "PAGO", 0, importe, saldo, data.get("observaciones", "")),
         )
         conn.commit()
-    audit("pago_cuenta_corriente", f"Cliente {cliente['nombre']} pago {importe}. Saldo {nuevo}")
-    return jsonify({"ok": True, "saldo": nuevo})
+    audit("pago_cuenta_corriente", f"{cliente['nombre']} {importe}")
+    return jsonify({"ok": True, "saldo": saldo})
 
 
-@app.post("/api/simple/<table>")
-def save_simple(table):
-    allowed = {"categorias", "marcas"}
-    if table not in allowed:
-        return jsonify({"error": "No disponible"}), 404
-    data = request.json or {}
-    module = TABLE_MODULES[table]
-    if not can(module, "modificar" if data.get("id") else "agregar"):
-        return forbidden()
-    nombre = data.get("nombre", "").strip()
-    if not nombre:
-        return jsonify({"error": "El nombre es obligatorio."}), 400
-    if table == "categorias":
-        params = (nombre, money(data.get("ganancia", 30)))
-        if data.get("id"):
-            execute("UPDATE categorias SET nombre=?, ganancia=? WHERE id=?", params + (data["id"],))
-        else:
-            execute("INSERT INTO categorias(nombre,ganancia) VALUES(?,?)", params)
-    else:
-        if data.get("id"):
-            execute("UPDATE marcas SET nombre=? WHERE id=?", (nombre, data["id"]))
-        else:
-            execute("INSERT INTO marcas(nombre) VALUES(?)", (nombre,))
-    return jsonify({"ok": True})
+def caja_actual():
+    return one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
 
 
-@app.post("/api/compras")
-def save_compra():
-    if not can("Compras", "agregar"):
-        return forbidden()
-    data = request.json or {}
-    proveedor_id = data.get("proveedor_id") or None
-    producto_id = data.get("producto_id")
-    cantidad = money(data.get("cantidad"))
-    precio = money(data.get("precio"))
-    factura = data.get("factura", "").strip()
-    observaciones = data.get("observaciones", "").strip()
-    if not producto_id or cantidad <= 0:
-        return jsonify({"error": "Seleccione producto y cantidad."}), 400
-    total = cantidad * precio
-    with db() as conn:
-        try:
-            conn.execute("BEGIN")
-            compra_id = conn.execute(
-                """
-                INSERT INTO compras(fecha,proveedor_id,factura,total,observaciones)
-                VALUES(?,?,?,?,?)
-                """,
-                (
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    proveedor_id,
-                    factura,
-                    total,
-                    observaciones,
-                ),
-            ).lastrowid
-            stock = conn.execute(
-                "SELECT stock FROM productos WHERE id=?", (producto_id,)
-            ).fetchone()
-            if not stock:
-                raise ValueError("Producto inexistente.")
-            stock_anterior = float(stock["stock"] or 0)
-            stock_nuevo = stock_anterior + cantidad
-            conn.execute(
-                """
-                INSERT INTO detalle_compras(compra_id,producto_id,cantidad,precio,subtotal)
-                VALUES(?,?,?,?,?)
-                """,
-                (compra_id, producto_id, cantidad, precio, total),
-            )
-            conn.execute(
-                """
-                UPDATE productos
-                SET stock=?, precio_compra=?
-                WHERE id=?
-                """,
-                (stock_nuevo, precio, producto_id),
-            )
-            conn.execute(
-                """
-                INSERT INTO movimientos_stock
-                (fecha,producto_id,tipo,cantidad,stock_anterior,stock_nuevo,observacion)
-                VALUES(?,?,?,?,?,?,?)
-                """,
-                (
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    producto_id,
-                    "COMPRA",
-                    cantidad,
-                    stock_anterior,
-                    stock_nuevo,
-                    f"Compra {compra_id}",
-                ),
-            )
-            conn.commit()
-        except Exception as exc:
-            conn.rollback()
-            return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "compra_id": compra_id})
-
-
-@app.post("/api/proveedores")
-def save_proveedor():
-    data = request.json or {}
-    if not can("Proveedores", "modificar" if data.get("id") else "agregar"):
-        return forbidden()
-    params = (
-        data.get("nombre", "").strip(),
-        data.get("contacto", "").strip(),
-        data.get("telefono", "").strip(),
-        data.get("email", "").strip(),
-        data.get("direccion", "").strip(),
-        data.get("localidad", "").strip(),
-        data.get("cuit", "").strip(),
-        data.get("observaciones", "").strip(),
-    )
-    if not params[0]:
-        return jsonify({"error": "El nombre es obligatorio."}), 400
-    if data.get("id"):
-        execute(
-            """
-            UPDATE proveedores
-            SET nombre=?, contacto=?, telefono=?, email=?, direccion=?,
-                localidad=?, cuit=?, observaciones=?
-            WHERE id=?
-            """,
-            params + (data["id"],),
-        )
-    else:
-        execute(
-            """
-            INSERT INTO proveedores
-            (nombre,contacto,telefono,email,direccion,localidad,cuit,observaciones)
-            VALUES(?,?,?,?,?,?,?,?)
-            """,
-            params,
-        )
-    return jsonify({"ok": True})
-
-
-@app.delete("/api/<table>/<int:item_id>")
-def delete_row(table, item_id):
-    allowed = {"productos", "clientes", "categorias", "marcas", "proveedores", "usuarios"}
-    if table not in allowed:
-        return jsonify({"error": "No disponible"}), 404
-    if not can(TABLE_MODULES[table], "eliminar"):
-        return forbidden()
-    if table == "clientes":
-        execute("UPDATE clientes SET activo=0 WHERE id=?", (item_id,))
-    elif table == "usuarios":
-        execute("UPDATE usuarios SET activo=0 WHERE id=?", (item_id,))
-    else:
-        execute(f"DELETE FROM {table} WHERE id=?", (item_id,))
-    audit("registro_eliminado", f"{table} id {item_id}")
-    return jsonify({"ok": True})
+@app.get("/api/ventas")
+def ventas():
+    return jsonify(rows(
+        """
+        SELECT v.*, COALESCE(c.nombre,'Consumidor final') cliente
+        FROM ventas v
+        LEFT JOIN clientes c ON c.id=v.cliente_id
+        ORDER BY v.id DESC
+        LIMIT 100
+        """
+    ))
 
 
 @app.post("/api/ventas")
@@ -775,782 +546,191 @@ def save_venta():
         return forbidden()
     data = request.json or {}
     items = data.get("items") or []
-    cliente_id = data.get("cliente_id")
-    tipo = data.get("tipo", "EFECTIVO")
-    if not cliente_id or not items:
-        return jsonify({"error": "Seleccione cliente y productos."}), 400
+    if not items:
+        return jsonify({"error": "Agregue productos."}), 400
     total = sum(money(i.get("subtotal")) for i in items)
+    cliente_id = data.get("cliente_id") or None
+    tipo = data.get("tipo", "EFECTIVO")
     with db() as conn:
         try:
             conn.execute("BEGIN")
             venta_id = conn.execute(
-                """
-                INSERT INTO ventas(fecha,cliente_id,tipo,total,usuario)
-                VALUES(?,?,?,?,?)
-                """,
-                (
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    cliente_id,
-                    tipo,
-                    total,
-                    session["user"]["usuario"],
-                ),
+                "INSERT INTO ventas(fecha,cliente_id,tipo,total,usuario) VALUES(?,?,?,?,?)",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cliente_id, tipo, total, session["user"]["usuario"]),
             ).lastrowid
             for item in items:
-                product = conn.execute(
-                    "SELECT stock FROM productos WHERE id=?", (item["producto_id"],)
-                ).fetchone()
+                prod = conn.execute("SELECT stock FROM productos WHERE id=?", (item["producto_id"],)).fetchone()
                 cantidad = money(item.get("cantidad"))
-                if not product or float(product["stock"]) < cantidad:
-                    raise ValueError("No hay stock suficiente.")
+                if not prod or money(prod["stock"]) < cantidad:
+                    raise ValueError("Stock insuficiente.")
                 precio = money(item.get("precio"))
                 subtotal = cantidad * precio
-                conn.execute(
-                    """
-                    INSERT INTO detalle_ventas
-                    (venta_id,producto_id,cantidad,precio,subtotal)
-                    VALUES(?,?,?,?,?)
-                    """,
-                    (venta_id, item["producto_id"], cantidad, precio, subtotal),
-                )
-                conn.execute(
-                    "UPDATE productos SET stock=stock-? WHERE id=?",
-                    (cantidad, item["producto_id"]),
-                )
-                conn.execute(
-                    """
-                    INSERT INTO movimientos_stock
-                    (fecha,producto_id,tipo,cantidad,stock_anterior,stock_nuevo,observacion)
-                    VALUES(?,?,?,?,?,?,?)
-                    """,
-                    (
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        item["producto_id"],
-                        "VENTA",
-                        cantidad,
-                        float(product["stock"] or 0),
-                        float(product["stock"] or 0) - cantidad,
-                        f"Venta {venta_id}",
-                    ),
-                )
-            if tipo == "CUENTA CORRIENTE":
-                saldo = conn.execute(
-                    "SELECT saldo FROM clientes WHERE id=?", (cliente_id,)
-                ).fetchone()["saldo"]
-                nuevo = float(saldo or 0) + total
-                conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (nuevo, cliente_id))
-                conn.execute(
-                    """
-                    INSERT INTO cuenta_corriente
-                    (cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
-                    VALUES(?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        cliente_id,
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        str(venta_id),
-                        "VENTA",
-                        total,
-                        0,
-                        nuevo,
-                        "",
-                    ),
-                )
-            else:
-                abierta = conn.execute(
-                    "SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1"
-                ).fetchone()
-                if abierta:
-                    campo = {
-                        "EFECTIVO": "efectivo",
-                        "TRANSFERENCIA": "transferencia",
-                        "DEBITO": "debito",
-                        "CREDITO": "credito",
-                        "POSNET": "posnet",
-                    }.get(tipo, "efectivo")
-                    conn.execute(
-                        f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?",
-                        (total, abierta["id"]),
-                    )
+                conn.execute("INSERT INTO venta_items(venta_id,producto_id,cantidad,precio,subtotal) VALUES(?,?,?,?,?)", (venta_id, item["producto_id"], cantidad, precio, subtotal))
+                conn.execute("UPDATE productos SET stock=stock-? WHERE id=?", (cantidad, item["producto_id"]))
+            caja = conn.execute("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1").fetchone()
+            if tipo == "CUENTA CORRIENTE" and cliente_id:
+                saldo = money(conn.execute("SELECT saldo FROM clientes WHERE id=?", (cliente_id,)).fetchone()["saldo"]) + total
+                conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo, cliente_id))
+                conn.execute("INSERT INTO cuenta_corriente(cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones) VALUES(?,?,?,?,?,?,?,?)", (cliente_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(venta_id), "VENTA", total, 0, saldo, ""))
+            elif caja:
+                campo = {"EFECTIVO": "efectivo", "TRANSFERENCIA": "transferencia", "DEBITO": "debito", "CREDITO": "credito", "POSNET": "posnet"}.get(tipo, "efectivo")
+                conn.execute(f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?", (total, caja["id"]))
             conn.commit()
-        except Exception as exc:
+        except ValueError as exc:
             conn.rollback()
             return jsonify({"error": str(exc)}), 400
     audit("venta_registrada", f"Venta {venta_id} total {total}")
-    return jsonify({"ok": True, "venta_id": venta_id, "total": total})
+    return jsonify({"ok": True, "venta_id": venta_id})
 
 
-@app.get("/api/ventas/<int:venta_id>/detalle")
+@app.get("/api/ventas/<int:venta_id>")
 def venta_detalle(venta_id):
-    if not can("Ventas"):
-        return forbidden()
-    venta = one(
-        """
-        SELECT v.*, c.nombre cliente
-        FROM ventas v
-        LEFT JOIN clientes c ON c.id=v.cliente_id
-        WHERE v.id=?
-        """,
-        (venta_id,),
-    )
-    if not venta:
-        return jsonify({"error": "Venta inexistente."}), 404
-    detalle = rows(
-        """
-        SELECT d.*, p.codigo, p.nombre producto
-        FROM detalle_ventas d
-        LEFT JOIN productos p ON p.id=d.producto_id
-        WHERE d.venta_id=?
-        ORDER BY d.id
-        """,
-        (venta_id,),
-    )
+    venta = one("SELECT v.*, COALESCE(c.nombre,'Consumidor final') cliente FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id WHERE v.id=?", (venta_id,))
+    detalle = rows("SELECT i.*, p.codigo, p.nombre producto FROM venta_items i LEFT JOIN productos p ON p.id=i.producto_id WHERE venta_id=?", (venta_id,))
     return jsonify({"venta": venta, "detalle": detalle})
 
 
-@app.get("/api/reportes")
-def reportes():
-    if not can("Reportes"):
-        return forbidden()
-    desde = request.args.get("desde") or datetime.now().strftime("%Y-%m-%d")
-    hasta = request.args.get("hasta") or desde
-    params = (desde, hasta)
-    resumen = one(
-        """
-        SELECT COUNT(*) ventas, COALESCE(SUM(total),0) total
-        FROM ventas
-        WHERE date(fecha) BETWEEN date(?) AND date(?)
-        """,
-        params,
-    )
-    medios = rows(
-        """
-        SELECT tipo, COUNT(*) cantidad, COALESCE(SUM(total),0) total
-        FROM ventas
-        WHERE date(fecha) BETWEEN date(?) AND date(?)
-        GROUP BY tipo
-        ORDER BY total DESC
-        """,
-        params,
-    )
-    top = rows(
-        """
-        SELECT p.codigo, p.nombre, SUM(d.cantidad) cantidad, SUM(d.subtotal) total
-        FROM detalle_ventas d
-        JOIN ventas v ON v.id=d.venta_id
-        LEFT JOIN productos p ON p.id=d.producto_id
-        WHERE date(v.fecha) BETWEEN date(?) AND date(?)
-        GROUP BY d.producto_id
-        ORDER BY cantidad DESC
-        LIMIT 10
-        """,
-        params,
-    )
-    bajos = rows(
-        """
-        SELECT codigo,nombre,marca,stock,stock_minimo
-        FROM productos
-        WHERE stock <= stock_minimo
-        ORDER BY stock ASC,nombre
-        """
-    )
-    movimientos = rows(
-        """
-        SELECT m.fecha,m.tipo,m.cantidad,m.stock_anterior,m.stock_nuevo,
-               m.observacion,p.codigo,p.nombre producto
-        FROM movimientos_stock m
-        LEFT JOIN productos p ON p.id=m.producto_id
-        ORDER BY m.id DESC
-        LIMIT 30
-        """
-    )
-    return jsonify(
-        {
-            "periodo": {"desde": desde, "hasta": hasta},
-            "resumen": {
-                **resumen,
-                "ticket_promedio": (
-                    resumen["total"] / resumen["ventas"] if resumen["ventas"] else 0
-                ),
-            },
-            "medios": medios,
-            "top": top,
-            "bajos": bajos,
-            "movimientos": movimientos,
-        }
-    )
-
-
-@app.get("/api/usuarios/<int:user_id>/permisos")
-def usuario_permisos(user_id):
-    if not can("Usuarios"):
-        return forbidden()
-    return jsonify(
-        rows(
-            """
-            SELECT modulo,ver,agregar,modificar,eliminar
-            FROM permisos
-            WHERE usuario_id=?
-            ORDER BY modulo
-            """,
-            (user_id,),
-        )
-    )
-
-
-@app.post("/api/usuarios")
-def save_usuario():
-    data = request.json or {}
-    usuario_id = data.get("id")
-    if not can("Usuarios", "modificar" if usuario_id else "agregar"):
-        return forbidden()
-    params = (
-        data.get("nombre", "").strip(),
-        data.get("usuario", "").strip(),
-        data.get("password", "").strip(),
-        data.get("rol", "CAJERO").strip() or "CAJERO",
-        int(data.get("activo", 1) or 0),
-    )
-    if not params[0] or not params[1] or (not usuario_id and not params[2]):
-        return jsonify({"error": "Nombre, usuario y contrasena son obligatorios."}), 400
-    if usuario_id:
-        if params[2]:
-            execute(
-                """
-                UPDATE usuarios
-                SET nombre=?, usuario=?, password=?, rol=?, activo=?
-                WHERE id=?
-                """,
-                (params[0], params[1], hash_password(params[2]), params[3], params[4], usuario_id),
-            )
-        else:
-            execute(
-                """
-                UPDATE usuarios
-                SET nombre=?, usuario=?, rol=?, activo=?
-                WHERE id=?
-                """,
-                (params[0], params[1], params[3], params[4], usuario_id),
-            )
-    else:
-        execute(
-            """
-            INSERT INTO usuarios(nombre,usuario,password,rol,activo)
-            VALUES(?,?,?,?,?)
-            """,
-            (params[0], params[1], hash_password(params[2]), params[3], params[4]),
-        )
-    audit("usuario_guardado", f"Usuario: {params[1]}")
-    return jsonify({"ok": True})
-
-
-@app.post("/api/usuarios/<int:user_id>/permisos")
-def save_usuario_permisos(user_id):
-    if not can("Usuarios", "modificar"):
-        return forbidden()
-    data = request.json or {}
-    permisos = data.get("permisos") or []
-    with db() as conn:
-        conn.execute("DELETE FROM permisos WHERE usuario_id=?", (user_id,))
-        for permiso in permisos:
-            conn.execute(
-                """
-                INSERT INTO permisos(usuario_id,modulo,ver,agregar,modificar,eliminar)
-                VALUES(?,?,?,?,?,?)
-                """,
-                (
-                    user_id,
-                    permiso.get("modulo"),
-                    int(permiso.get("ver") or 0),
-                    int(permiso.get("agregar") or 0),
-                    int(permiso.get("modificar") or 0),
-                    int(permiso.get("eliminar") or 0),
-                ),
-            )
-        conn.commit()
-    audit("permisos_actualizados", f"Usuario id: {user_id}")
-    return jsonify({"ok": True})
-
-
-@app.post("/api/seguridad/cambiar-password")
-def cambiar_password():
-    data = request.json or {}
-    actual = data.get("actual", "")
-    nueva = data.get("nueva", "")
-    repetir = data.get("repetir", "")
-    if len(nueva) < 4:
-        return jsonify({"error": "La nueva contrasena debe tener al menos 4 caracteres."}), 400
-    if nueva != repetir:
-        return jsonify({"error": "Las contrasenas nuevas no coinciden."}), 400
-    user = one("SELECT * FROM usuarios WHERE id=?", (session["user"]["id"],))
-    if not user or not verify_password(actual, user["password"]):
-        audit("password_fallido", "Intento de cambio de contrasena")
-        return jsonify({"error": "La contrasena actual no es correcta."}), 400
-    execute("UPDATE usuarios SET password=? WHERE id=?", (hash_password(nueva), user["id"]))
-    audit("password_cambiado", "Cambio de contrasena propio")
-    return jsonify({"ok": True})
-
-
-@app.get("/api/seguridad/auditoria")
-def seguridad_auditoria():
-    if session["user"]["rol"] != "ADMIN":
-        return forbidden()
-    q = f"%{request.args.get('q', '').strip()}%"
-    return jsonify(
-        rows(
-            """
-            SELECT id,fecha,usuario,accion,detalle
-            FROM auditoria
-            WHERE usuario LIKE ? OR accion LIKE ? OR detalle LIKE ?
-            ORDER BY id DESC
-            LIMIT 120
-            """,
-            (q, q, q),
-        )
-    )
-
-
 @app.get("/api/caja/actual")
-def caja_actual():
-    if not can("Caja"):
-        return forbidden()
-    caja = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
-    return jsonify(caja or {})
+def api_caja_actual():
+    return jsonify(caja_actual() or {})
 
 
 @app.post("/api/caja/abrir")
 def abrir_caja():
-    if not can("Caja", "agregar"):
-        return forbidden()
-    data = request.json or {}
-    existe = one("SELECT id FROM caja WHERE estado='ABIERTA' LIMIT 1")
-    if existe:
-        return jsonify({"error": "Ya existe una caja abierta."}), 400
-    caja_id = execute(
-        "INSERT INTO caja(fecha,apertura,estado) VALUES(?,?,?)",
-        (datetime.now().strftime("%Y-%m-%d"), money(data.get("apertura")), "ABIERTA"),
-    )
-    audit("caja_abierta", f"Caja {caja_id} apertura {money(data.get('apertura'))}")
+    if caja_actual():
+        return jsonify({"error": "Ya hay caja abierta."}), 400
+    caja_id = execute("INSERT INTO caja(fecha,estado,apertura) VALUES(?,?,?)", (datetime.now().strftime("%Y-%m-%d"), "ABIERTA", money(request.json.get("apertura") if request.json else 0)))
+    audit("caja_abierta", caja_id)
     return jsonify({"ok": True})
 
 
 @app.post("/api/caja/movimiento")
 def caja_movimiento():
-    if not can("Caja", "agregar"):
-        return forbidden()
-    data = request.json or {}
-    caja = one("SELECT id FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
+    caja = caja_actual()
     if not caja:
         return jsonify({"error": "No hay caja abierta."}), 400
+    data = request.json or {}
     importe = money(data.get("importe"))
-    tipo = data.get("tipo")
-    if tipo == "gasto":
-        execute(
-            "INSERT INTO gastos(fecha,descripcion,importe,caja_id) VALUES(date('now'),?,?,?)",
-            (data.get("descripcion", "Gasto"), importe, caja["id"]),
-        )
-        execute("UPDATE caja SET gastos=COALESCE(gastos,0)+? WHERE id=?", (importe, caja["id"]))
-    else:
-        execute(
-            "UPDATE caja SET ingresos=COALESCE(ingresos,0)+? WHERE id=?",
-            (importe, caja["id"]),
-        )
-    audit("movimiento_caja", f"Caja {caja['id']} {tipo} {importe}")
+    tipo = data.get("tipo", "ingreso")
+    campo = "gastos" if tipo == "gasto" else "ingresos"
+    execute(f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?", (importe, caja["id"]))
+    execute("INSERT INTO caja_movimientos(caja_id,fecha,tipo,descripcion,importe) VALUES(?,?,?,?,?)", (caja["id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tipo, data.get("descripcion", ""), importe))
+    audit("movimiento_caja", f"{tipo} {importe}")
     return jsonify({"ok": True})
+
+
+def sistema_caja(caja):
+    return {
+        "efectivo": money(caja["apertura"]) + money(caja["efectivo"]) + money(caja["ingresos"]) - money(caja["gastos"]),
+        "transferencia": money(caja["transferencia"]),
+        "debito": money(caja["debito"]),
+        "credito": money(caja["credito"]),
+        "posnet": money(caja["posnet"]),
+    }
 
 
 @app.post("/api/caja/cerrar")
 def cerrar_caja():
-    if not can("Caja", "modificar"):
-        return forbidden()
-    data = request.json or {}
-    caja = one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
+    caja = caja_actual()
     if not caja:
         return jsonify({"error": "No hay caja abierta."}), 400
-    sistema = {
-        "efectivo": money(caja.get("apertura"))
-        + money(caja.get("efectivo"))
-        + money(caja.get("ingresos"))
-        - money(caja.get("gastos")),
-        "transferencia": money(caja.get("transferencia")),
-        "debito": money(caja.get("debito")),
-        "credito": money(caja.get("credito")),
-        "posnet": money(caja.get("posnet")),
-    }
-    contado = {
-        "efectivo": money(data.get("efectivo_contado", data.get("cierre"))),
-        "transferencia": money(data.get("transferencia_contado")),
-        "debito": money(data.get("debito_contado")),
-        "credito": money(data.get("credito_contado")),
-        "posnet": money(data.get("posnet_contado")),
-    }
-    teorico = sum(sistema.values())
-    cierre = sum(contado.values())
-    diferencia = cierre - teorico
-    observaciones = data.get("observaciones", "").strip()
-    execute(
-        "UPDATE caja SET cierre=?, diferencia=?, estado='CERRADA' WHERE id=?",
-        (cierre, diferencia, caja["id"]),
-    )
-    execute(
-        """
-        INSERT INTO arqueo_caja
-        (fecha,usuario,apertura,efectivo_sistema,efectivo_contado,
-         diferencia_efectivo,posnet_sistema,posnet_contado,diferencia_posnet,
-         observaciones,estado,caja_id)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            session["user"]["usuario"],
-            money(caja.get("apertura")),
-            sistema["efectivo"],
-            contado["efectivo"],
-            contado["efectivo"] - sistema["efectivo"],
-            sistema["posnet"],
-            contado["posnet"],
-            contado["posnet"] - sistema["posnet"],
-            (
-                f"{observaciones} | "
-                f"Transferencia sis/cont/dif: {sistema['transferencia']}/{contado['transferencia']}/{contado['transferencia'] - sistema['transferencia']}; "
-                f"Debito sis/cont/dif: {sistema['debito']}/{contado['debito']}/{contado['debito'] - sistema['debito']}; "
-                f"Credito sis/cont/dif: {sistema['credito']}/{contado['credito']}/{contado['credito'] - sistema['credito']}; "
-                f"Total sis/cont/dif: {teorico}/{cierre}/{diferencia}"
-            ).strip(),
-            "CERRADA",
-            caja["id"],
-        ),
-    )
-    audit("caja_cerrada", f"Caja {caja['id']} diferencia {diferencia}")
-    return jsonify({"ok": True, "sistema": teorico, "contado": cierre, "diferencia": diferencia})
-
-
-def caja_sistema_por_medio(caja):
-    return {
-        "efectivo": money(caja.get("apertura"))
-        + money(caja.get("efectivo"))
-        + money(caja.get("ingresos"))
-        - money(caja.get("gastos")),
-        "transferencia": money(caja.get("transferencia")),
-        "debito": money(caja.get("debito")),
-        "credito": money(caja.get("credito")),
-        "posnet": money(caja.get("posnet")),
-    }
-
-
-def caja_arqueo_detalle(caja):
-    arqueo = one(
-        "SELECT * FROM arqueo_caja WHERE caja_id=? ORDER BY id DESC LIMIT 1",
-        (caja["id"],),
-    )
-    sistema = caja_sistema_por_medio(caja)
-    contado = {
-        "efectivo": money(arqueo.get("efectivo_contado")) if arqueo else money(caja.get("cierre")),
-        "transferencia": sistema["transferencia"],
-        "debito": sistema["debito"],
-        "credito": sistema["credito"],
-        "posnet": money(arqueo.get("posnet_contado")) if arqueo else sistema["posnet"],
-    }
-    medios = []
-    for medio, label in [
-        ("efectivo", "Efectivo"),
-        ("transferencia", "Transferencia"),
-        ("debito", "Debito"),
-        ("credito", "Credito"),
-        ("posnet", "Posnet"),
-    ]:
-        medios.append(
-            {
-                "medio": label,
-                "sistema": sistema[medio],
-                "contado": contado[medio],
-                "diferencia": contado[medio] - sistema[medio],
-            }
-        )
-    return {
-        "caja": caja,
-        "arqueo": arqueo or {},
-        "sistema": sistema,
-        "contado": contado,
-        "medios": medios,
-        "totales": {
-            "sistema": sum(sistema.values()),
-            "contado": sum(contado.values()),
-            "diferencia": sum(contado.values()) - sum(sistema.values()),
-        },
-    }
-
-
-@app.get("/api/caja/ultimo-arqueo")
-def ultimo_arqueo():
-    if session["user"]["rol"] != "ADMIN":
-        return forbidden()
-    caja_id = request.args.get("caja_id")
-    if caja_id:
-        caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
-    else:
-        caja = one("SELECT * FROM caja WHERE estado='CERRADA' ORDER BY id DESC LIMIT 1")
-    if not caja:
-        return jsonify({})
-    return jsonify(caja_arqueo_detalle(caja))
-
-
-@app.get("/api/caja/<int:caja_id>/detalle")
-def caja_detalle(caja_id):
-    if not can("Caja"):
-        return forbidden()
-    caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
-    if not caja:
-        return jsonify({"error": "Caja inexistente."}), 404
-    detalle = caja_arqueo_detalle(caja)
-    detalle["movimientos"] = rows(
-        """
-        SELECT fecha,descripcion,importe
-        FROM gastos
-        WHERE caja_id=?
-        ORDER BY id DESC
-        """,
-        (caja_id,),
-    )
-    return jsonify(detalle)
-
-
-@app.get("/api/caja/cierres")
-def caja_cierres():
-    if not can("Caja"):
-        return forbidden()
-    q = f"%{request.args.get('q', '').strip()}%"
-    desde = request.args.get("desde", "").strip()
-    hasta = request.args.get("hasta", "").strip()
-    estado = request.args.get("estado", "").strip().upper()
-    filters = [
-        """
-        (
-            c.fecha LIKE ?
-            OR CAST(c.id AS TEXT) LIKE ?
-            OR COALESCE(c.estado,'') LIKE ?
-            OR CAST(c.diferencia AS TEXT) LIKE ?
-            OR COALESCE(a.usuario,'') LIKE ?
-            OR COALESCE(a.usuario_correccion,'') LIKE ?
-        )
-        """
-    ]
-    params = [q, q, q, q, q, q]
-    if desde:
-        filters.append("date(c.fecha) >= date(?)")
-        params.append(desde)
-    if hasta:
-        filters.append("date(c.fecha) <= date(?)")
-        params.append(hasta)
-    if estado in {"ABIERTA", "CERRADA"}:
-        filters.append("c.estado=?")
-        params.append(estado)
-    return jsonify(
-        rows(
-            f"""
-            SELECT c.id,c.fecha,c.estado,c.apertura,c.efectivo,c.transferencia,
-                   c.debito,c.credito,c.posnet,c.ingresos,c.gastos,c.cierre,
-                   c.diferencia,a.usuario,a.usuario_correccion,a.fecha_correccion,
-                   a.motivo_correccion,a.corregido
-            FROM caja c
-            LEFT JOIN arqueo_caja a ON a.id=(
-                SELECT id FROM arqueo_caja
-                WHERE caja_id=c.id
-                ORDER BY id DESC
-                LIMIT 1
-            )
-            WHERE {" AND ".join(filters)}
-            ORDER BY c.id DESC
-            LIMIT 80
-            """,
-            params,
-        )
-    )
-
-
-@app.post("/api/caja/corregir-arqueo")
-def corregir_arqueo():
-    if session["user"]["rol"] != "ADMIN":
-        return forbidden()
     data = request.json or {}
-    caja_id = data.get("caja_id")
-    arqueo_id = data.get("arqueo_id")
-    motivo = data.get("motivo", "").strip()
-    if not caja_id or not motivo:
-        return jsonify({"error": "Caja y motivo son obligatorios."}), 400
-    caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
-    if not caja:
-        return jsonify({"error": "Caja inexistente."}), 404
-    sistema = caja_sistema_por_medio(caja)
-    contado = {
-        "efectivo": money(data.get("efectivo_contado")),
-        "transferencia": money(data.get("transferencia_contado")),
-        "debito": money(data.get("debito_contado")),
-        "credito": money(data.get("credito_contado")),
-        "posnet": money(data.get("posnet_contado")),
-    }
+    sistema = sistema_caja(caja)
+    contado = {k: money(data.get(f"{k}_contado")) for k in sistema}
     total_sistema = sum(sistema.values())
     total_contado = sum(contado.values())
-    diferencia = total_contado - total_sistema
-    execute(
-        "UPDATE caja SET cierre=?, diferencia=? WHERE id=?",
-        (total_contado, diferencia, caja_id),
-    )
-    obs = (
-        f"CORRECCION: {motivo} | "
-        f"Efectivo sis/cont/dif: {sistema['efectivo']}/{contado['efectivo']}/{contado['efectivo'] - sistema['efectivo']}; "
-        f"Transferencia sis/cont/dif: {sistema['transferencia']}/{contado['transferencia']}/{contado['transferencia'] - sistema['transferencia']}; "
-        f"Debito sis/cont/dif: {sistema['debito']}/{contado['debito']}/{contado['debito'] - sistema['debito']}; "
-        f"Credito sis/cont/dif: {sistema['credito']}/{contado['credito']}/{contado['credito'] - sistema['credito']}; "
-        f"Posnet sis/cont/dif: {sistema['posnet']}/{contado['posnet']}/{contado['posnet'] - sistema['posnet']}; "
-        f"Total sis/cont/dif: {total_sistema}/{total_contado}/{diferencia}"
-    )
-    if arqueo_id:
-        execute(
+    dif = total_contado - total_sistema
+    with db() as conn:
+        conn.execute("UPDATE caja SET estado='CERRADA', cierre=?, diferencia=? WHERE id=?", (total_contado, dif, caja["id"]))
+        conn.execute(
             """
-            UPDATE arqueo_caja
-            SET efectivo_sistema=?, efectivo_contado=?, diferencia_efectivo=?,
-                posnet_sistema=?, posnet_contado=?, diferencia_posnet=?,
-                observaciones=?, corregido=1, usuario_correccion=?,
-                fecha_correccion=?, motivo_correccion=?, motivo=?
-            WHERE id=?
-            """,
-            (
-                sistema["efectivo"],
-                contado["efectivo"],
-                contado["efectivo"] - sistema["efectivo"],
-                sistema["posnet"],
-                contado["posnet"],
-                contado["posnet"] - sistema["posnet"],
-                obs,
-                session["user"]["usuario"],
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                motivo,
-                motivo,
-                arqueo_id,
-            ),
-        )
-    else:
-        execute(
-            """
-            INSERT INTO arqueo_caja
-            (fecha,usuario,apertura,efectivo_sistema,efectivo_contado,
-             diferencia_efectivo,posnet_sistema,posnet_contado,diferencia_posnet,
-             observaciones,estado,caja_id,corregido,usuario_correccion,
-             fecha_correccion,motivo_correccion,motivo)
+            INSERT INTO caja_arqueos(caja_id,fecha,usuario,efectivo_sistema,efectivo_contado,transferencia_sistema,transferencia_contado,debito_sistema,debito_contado,credito_sistema,credito_contado,posnet_sistema,posnet_contado,total_sistema,total_contado,diferencia,observaciones)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
-            (
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                session["user"]["usuario"],
-                money(caja.get("apertura")),
-                sistema["efectivo"],
-                contado["efectivo"],
-                contado["efectivo"] - sistema["efectivo"],
-                sistema["posnet"],
-                contado["posnet"],
-                contado["posnet"] - sistema["posnet"],
-                obs,
-                "CERRADA",
-                caja_id,
-                1,
-                session["user"]["usuario"],
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                motivo,
-                motivo,
-            ),
+            (caja["id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), session["user"]["usuario"], sistema["efectivo"], contado["efectivo"], sistema["transferencia"], contado["transferencia"], sistema["debito"], contado["debito"], sistema["credito"], contado["credito"], sistema["posnet"], contado["posnet"], total_sistema, total_contado, dif, data.get("observaciones", "")),
         )
-    audit("caja_corregida", f"Caja {caja_id} diferencia {diferencia}. Motivo: {motivo}")
-    return jsonify({"ok": True, "sistema": total_sistema, "contado": total_contado, "diferencia": diferencia})
+        conn.commit()
+    audit("caja_cerrada", f"Caja {caja['id']} dif {dif}")
+    return jsonify({"ok": True})
+
+
+@app.get("/api/caja")
+def listar_caja():
+    return jsonify(rows("SELECT * FROM caja ORDER BY id DESC LIMIT 100"))
+
+
+@app.get("/api/caja/<int:caja_id>")
+def detalle_caja(caja_id):
+    caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
+    arqueo = one("SELECT * FROM caja_arqueos WHERE caja_id=? ORDER BY id DESC LIMIT 1", (caja_id,)) or {}
+    movs = rows("SELECT * FROM caja_movimientos WHERE caja_id=? ORDER BY id DESC", (caja_id,))
+    sistema = sistema_caja(caja)
+    return jsonify({"caja": caja, "arqueo": arqueo, "movimientos": movs, "sistema": sistema})
+
+
+@app.get("/api/reportes")
+def reportes():
+    desde = request.args.get("desde") or datetime.now().strftime("%Y-%m-%d")
+    hasta = request.args.get("hasta") or desde
+    params = (desde, hasta)
+    resumen = one("SELECT COUNT(*) ventas, COALESCE(SUM(total),0) total FROM ventas WHERE date(fecha) BETWEEN date(?) AND date(?)", params)
+    medios = rows("SELECT tipo, COUNT(*) cantidad, COALESCE(SUM(total),0) total FROM ventas WHERE date(fecha) BETWEEN date(?) AND date(?) GROUP BY tipo ORDER BY total DESC", params)
+    top = rows(
+        """
+        SELECT p.codigo,p.nombre,SUM(i.cantidad) cantidad,SUM(i.subtotal) total
+        FROM venta_items i
+        JOIN ventas v ON v.id=i.venta_id
+        LEFT JOIN productos p ON p.id=i.producto_id
+        WHERE date(v.fecha) BETWEEN date(?) AND date(?)
+        GROUP BY p.id
+        ORDER BY cantidad DESC
+        LIMIT 10
+        """,
+        params,
+    )
+    bajos = rows("SELECT codigo,nombre,stock,stock_minimo FROM productos WHERE activo=1 AND stock<=stock_minimo ORDER BY stock")
+    return jsonify({"periodo": {"desde": desde, "hasta": hasta}, "resumen": resumen, "medios": medios, "top": top, "bajos": bajos})
 
 
 @app.post("/api/backup")
-def backup():
-    if not can("Configuracion", "agregar") and not can("Configuracion", "modificar"):
-        return forbidden()
+def crear_backup():
     backup_dir = os.path.join(BASE_DIR, "backups")
     os.makedirs(backup_dir, exist_ok=True)
     filename = f"bebidas_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
     target = os.path.join(backup_dir, filename)
     shutil.copy2(DB_PATH, target)
     audit("backup_creado", filename)
-    return jsonify({"ok": True, "archivo": os.path.join("backups", filename)})
+    return jsonify({"ok": True, "archivo": filename})
 
 
 @app.get("/api/backups")
-def listar_backups():
-    if not can("Configuracion"):
-        return forbidden()
+def backups():
     backup_dir = os.path.join(BASE_DIR, "backups")
     os.makedirs(backup_dir, exist_ok=True)
-    items = []
+    data = []
     for name in os.listdir(backup_dir):
-        if not name.endswith(".db"):
-            continue
-        path = os.path.join(backup_dir, name)
-        stat = os.stat(path)
-        items.append(
-            {
-                "archivo": name,
-                "fecha": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-                "tamano": stat.st_size,
-            }
-        )
-    return jsonify(sorted(items, key=lambda item: item["fecha"], reverse=True))
+        if name.endswith(".db"):
+            path = os.path.join(backup_dir, name)
+            data.append({"archivo": name, "fecha": datetime.fromtimestamp(os.path.getmtime(path)).strftime("%Y-%m-%d %H:%M:%S"), "tamano": os.path.getsize(path)})
+    return jsonify(sorted(data, key=lambda x: x["fecha"], reverse=True))
 
 
-@app.get("/api/backups/<path:filename>")
-def descargar_backup(filename):
-    if not can("Configuracion"):
-        return forbidden()
-    safe = os.path.basename(filename)
-    if safe != filename or not safe.endswith(".db"):
-        return jsonify({"error": "Archivo invalido."}), 400
+@app.get("/api/backups/<path:name>")
+def download_backup(name):
+    safe = os.path.basename(name)
     path = os.path.join(BASE_DIR, "backups", safe)
     if not os.path.exists(path):
-        return jsonify({"error": "Backup inexistente."}), 404
+        return jsonify({"error": "No existe."}), 404
     return send_file(path, as_attachment=True, download_name=safe)
 
 
-def validar_backup_sqlite(path):
-    try:
-        conn = sqlite3.connect(path)
-        try:
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='usuarios'"
-            ).fetchone()
-            return row is not None
-        finally:
-            conn.close()
-    except sqlite3.Error:
-        return False
-
-
-@app.post("/api/backups/restaurar")
-def restaurar_backup():
+@app.get("/api/auditoria")
+def auditoria():
     if session["user"]["rol"] != "ADMIN":
         return forbidden()
-    uploaded = request.files.get("backup")
-    if not uploaded or not uploaded.filename.endswith(".db"):
-        return jsonify({"error": "Subi un archivo .db de backup."}), 400
-    backup_dir = os.path.join(BASE_DIR, "backups")
-    os.makedirs(backup_dir, exist_ok=True)
-    temp_name = f"restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    temp_path = os.path.join(backup_dir, temp_name)
-    uploaded.save(temp_path)
-    if not validar_backup_sqlite(temp_path):
-        os.remove(temp_path)
-        return jsonify({"error": "El archivo no parece ser una base valida del sistema."}), 400
-    previo = f"antes_de_restaurar_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
-    shutil.copy2(DB_PATH, os.path.join(backup_dir, previo))
-    shutil.copy2(temp_path, DB_PATH)
-    ensure_schema()
-    audit("backup_restaurado", f"Restaurado {uploaded.filename}. Copia previa: {previo}")
-    return jsonify({"ok": True, "archivo_previo": os.path.join("backups", previo)})
+    return jsonify(rows("SELECT * FROM auditoria ORDER BY id DESC LIMIT 100"))
 
 
 if __name__ == "__main__":
-    ensure_schema()
     port = int(os.environ.get("PORT", 5000))
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    app.run(host="0.0.0.0", port=port, debug=os.environ.get("FLASK_DEBUG") == "1")

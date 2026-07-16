@@ -607,6 +607,11 @@ async function loadCaja() {
   $("#mov-caja-form").hidden = !abierta;
   $("#cerrar-caja-form").hidden = !abierta;
 
+  const adminAlerta = $("#caja-admin-alerta");
+  if (adminAlerta) {
+    adminAlerta.hidden = !(abierta && state.user?.rol === "ADMIN");
+  }
+
   if (abierta) {
     renderArqueo(sistema);
     renderBilletes();
@@ -1310,15 +1315,27 @@ $("#venta-form").onsubmit = async (ev) => {
 
 $("#abrir-caja-form").onsubmit = async (ev) => {
   ev.preventDefault();
+
   try {
     await api("/api/caja/abrir", {
       method: "POST",
       body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
     });
+
     ev.target.reset();
     ev.target.elements.apertura.value = "0";
     await loadCaja();
   } catch (error) {
+    if (String(error.message).includes("Ya hay una caja abierta")) {
+      alert(
+        state.user?.rol === "ADMIN"
+          ? "Ya existe una caja abierta. Puede cerrarla normalmente o usar Forzar cierre si quedó trabada."
+          : "Ya existe una caja abierta. Ingrese a Caja para continuar trabajando o cerrarla."
+      );
+      await loadCaja();
+      return;
+    }
+
     alert(error.message);
   }
 };
@@ -1368,6 +1385,39 @@ $("#cerrar-caja-form").onsubmit = async (ev) => {
         : `Caja cerrada con diferencia de ${money(result.diferencia)}.`
     );
 
+    ev.target.reset();
+    await loadCaja();
+    await verDetalleCaja(result.caja_id);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#forzar-cierre-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  if (state.user?.rol !== "ADMIN") {
+    return alert("Solo el administrador puede forzar el cierre.");
+  }
+
+  const data = Object.fromEntries(new FormData(ev.target));
+
+  if (!data.motivo?.trim()) {
+    return alert("Ingrese el motivo del cierre forzado.");
+  }
+
+  if (!confirm(
+    "¿Confirma el cierre forzado?\n\n" +
+    "Se cerrará la caja usando los importes del sistema y la acción quedará registrada."
+  )) return;
+
+  try {
+    const result = await api("/api/caja/forzar-cierre", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    alert(`Caja N.º ${result.caja_id} cerrada de forma administrativa.`);
     ev.target.reset();
     await loadCaja();
     await verDetalleCaja(result.caja_id);

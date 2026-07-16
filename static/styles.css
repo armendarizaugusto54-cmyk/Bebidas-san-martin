@@ -674,3 +674,209 @@ input[readonly] {
     flex-direction: column;
   }
 }
+
+
+/* =========================================================
+   CLIENTES Y CUENTA CORRIENTE 2.0
+   ========================================================= */
+.clientes-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--brand);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.clientes-head h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+}
+
+.clientes-layout {
+  display: grid;
+  grid-template-columns: minmax(650px, 1.35fr) minmax(320px, .65fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.cliente-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 13px;
+}
+
+.cliente-nombre {
+  grid-column: span 2;
+}
+
+.cliente-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+.cliente-form-actions button {
+  min-width: 150px;
+  min-height: 44px;
+}
+
+.cliente-resumen-cards {
+  display: grid;
+  gap: 10px;
+}
+
+.cliente-resumen-cards article {
+  display: grid;
+  gap: 7px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--brand);
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.cliente-resumen-cards span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.cliente-resumen-cards strong {
+  font-size: 24px;
+}
+
+.clientes-list-head {
+  align-items: center;
+}
+
+.clientes-buscador {
+  width: min(380px, 100%);
+}
+
+#tabla-clientes td:nth-child(7) {
+  color: var(--bad);
+  font-weight: 700;
+}
+
+.cuenta-panel {
+  border-left: 6px solid var(--good);
+}
+
+.cuenta-panel-head {
+  align-items: center;
+}
+
+.cuenta-head-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cuenta-alerta {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 7px;
+  font-weight: 700;
+}
+
+.cuenta-alerta-ok {
+  background: #e9f7ef;
+  color: var(--good);
+}
+
+.cuenta-alerta-warn {
+  background: #fff7df;
+  color: #9a6700;
+}
+
+.cuenta-alerta-bad {
+  background: #ffeaea;
+  color: var(--bad);
+}
+
+.cuenta-cards {
+  grid-template-columns: repeat(6, minmax(130px, 1fr));
+}
+
+.cuenta-operaciones {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.cuenta-operacion-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(150px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.cuenta-operacion-form h2 {
+  grid-column: 1 / -1;
+}
+
+.cuenta-operacion-form button {
+  min-height: 42px;
+}
+
+.cuenta-filtros {
+  display: grid;
+  grid-template-columns: 180px 180px 120px 120px;
+  gap: 10px;
+  align-items: end;
+  margin: 5px 0 15px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.cuenta-ventas-panel {
+  margin-top: 16px;
+  margin-bottom: 0;
+}
+
+@media (max-width: 1200px) {
+  .clientes-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cuenta-cards {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 850px) {
+  .cliente-grid,
+  .cuenta-operaciones,
+  .cuenta-operacion-form,
+  .cuenta-filtros {
+    grid-template-columns: 1fr;
+  }
+
+  .cliente-nombre {
+    grid-column: auto;
+  }
+
+  .cuenta-cards {
+    grid-template-columns: repeat(2, minmax(130px, 1fr));
+  }
+
+  .clientes-head,
+  .clientes-list-head,
+  .cuenta-panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cliente-form-actions,
+  .cuenta-head-actions {
+    flex-direction: column;
+  }
+}

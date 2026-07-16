@@ -3,7 +3,7 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let state = { user: null, options: {}, productos: [], categorias: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, productosFiltrados: [] };
+let state = { user: null, options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, productosFiltrados: [], clientesFiltrados: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -239,29 +239,123 @@ async function loadProductos() {
   calcularVentaProducto();
 }
 
-async function loadClientes() {
-  await loadOptions();
-  const data = await api("/api/clientes");
-  table($("#tabla-clientes"), [
-    { key: "nombre", label: "Cliente" },
-    { key: "telefono", label: "Telefono" },
-    { key: "whatsapp", label: "WhatsApp" },
-    { key: "localidad", label: "Localidad" },
-    { key: "saldo", label: "Saldo", format: money },
-  ], data, (r) => `<button data-cuenta="${r.id}">Cuenta</button><button data-edit-cliente="${r.id}">Editar</button>`);
+function resetClienteForm() {
+  const form = $("#cliente-form");
+  form.reset();
+  form.elements.id.value = "";
+  form.elements.limite_credito.value = "0";
+  $("#cliente-form-title").textContent = "Nuevo cliente";
 }
 
-async function loadCuenta(clienteId, scroll = true) {
-  const data = await api(`/api/clientes/${clienteId}/cuenta`);
+function editarCliente(cliente) {
+  if (!cliente) return;
+
+  const form = $("#cliente-form");
+  Object.entries(cliente).forEach(([key, value]) => {
+    if (form.elements[key]) form.elements[key].value = value ?? "";
+  });
+
+  $("#cliente-form-title").textContent = `Editar cliente: ${cliente.nombre}`;
+  form.scrollIntoView({ behavior: "smooth", block: "start" });
+  form.elements.nombre.focus();
+}
+
+function renderClientesLocal() {
+  const q = ($("#buscar-clientes-local")?.value || "").trim().toLowerCase();
+
+  const data = state.clientes.filter((cliente) => {
+    const texto = [
+      cliente.nombre,
+      cliente.telefono,
+      cliente.whatsapp,
+      cliente.cuit,
+      cliente.localidad,
+      cliente.direccion,
+      cliente.email,
+    ].join(" ").toLowerCase();
+
+    return !q || texto.includes(q);
+  });
+
+  state.clientesFiltrados = data;
+  $("#clientes-contador").textContent = `${data.length} cliente${data.length === 1 ? "" : "s"}`;
+
+  table($("#tabla-clientes"), [
+    { key: "nombre", label: "Cliente" },
+    { key: "telefono", label: "Teléfono" },
+    { key: "whatsapp", label: "WhatsApp" },
+    { key: "localidad", label: "Localidad" },
+    { key: "cuit", label: "CUIT / DNI" },
+    { key: "limite_credito", label: "Límite", format: money },
+    { key: "saldo", label: "Saldo", format: money },
+    { key: "credito_disponible", label: "Disponible", format: money },
+  ], data, (r) => `
+    <button type="button" data-cuenta="${r.id}">Cuenta</button>
+    <button type="button" data-edit-cliente="${r.id}">Editar</button>
+    <button type="button" class="danger" data-del-cliente="${r.id}">Baja</button>
+  `);
+
+  const saldoTotal = state.clientes.reduce((sum, c) => sum + Number(c.saldo || 0), 0);
+  const conDeuda = state.clientes.filter((c) => Number(c.saldo || 0) > 0.009).length;
+  const creditoDisponible = state.clientes.reduce((sum, c) => sum + Number(c.credito_disponible || 0), 0);
+
+  $("#clientes-total").textContent = state.clientes.length;
+  $("#clientes-saldo-total").textContent = money(saldoTotal);
+  $("#clientes-con-deuda").textContent = conDeuda;
+  $("#clientes-credito-disponible").textContent = money(creditoDisponible);
+}
+
+async function loadClientes() {
+  await loadOptions();
+  state.clientes = await api("/api/clientes");
+  renderClientesLocal();
+}
+
+async function loadCuenta(clienteId, scroll = true, filtros = {}) {
+  const params = new URLSearchParams();
+  if (filtros.desde) params.set("desde", filtros.desde);
+  if (filtros.hasta) params.set("hasta", filtros.hasta);
+
+  const url = `/api/clientes/${clienteId}/cuenta${params.toString() ? "?" + params.toString() : ""}`;
+  const data = await api(url);
+
   state.cuenta = data;
+
   $("#cuenta-panel").hidden = false;
   $("#cuenta-title").textContent = `Cuenta corriente - ${data.cliente.nombre}`;
-  $("#cuenta-sub").textContent = `${data.cliente.telefono || ""} ${data.cliente.cuit ? " - " + data.cliente.cuit : ""}`;
+  $("#cuenta-sub").textContent = [
+    data.cliente.telefono || "",
+    data.cliente.cuit ? `CUIT/DNI: ${data.cliente.cuit}` : "",
+    data.cliente.localidad || "",
+  ].filter(Boolean).join(" · ");
+
   $("#cuenta-saldo").textContent = money(data.cliente.saldo);
   $("#cuenta-debe").textContent = money(data.resumen.debe);
   $("#cuenta-haber").textContent = money(data.resumen.haber);
+  $("#cuenta-limite").textContent = money(data.cliente.limite_credito);
+  $("#cuenta-disponible").textContent = money(data.credito_disponible);
   $("#cuenta-movs").textContent = data.resumen.movimientos || 0;
+
   $("#pago-form").elements.cliente_id.value = data.cliente.id;
+  $("#ajuste-cuenta-form").elements.cliente_id.value = data.cliente.id;
+
+  const saldo = Number(data.cliente.saldo || 0);
+  const limite = Number(data.cliente.limite_credito || 0);
+  const alerta = $("#cuenta-alerta");
+
+  if (saldo <= 0) {
+    alerta.className = "cuenta-alerta cuenta-alerta-ok";
+    alerta.textContent = saldo < 0
+      ? `El cliente tiene saldo a favor de ${money(Math.abs(saldo))}.`
+      : "La cuenta se encuentra al día.";
+  } else if (limite > 0 && saldo >= limite) {
+    alerta.className = "cuenta-alerta cuenta-alerta-bad";
+    alerta.textContent = `Límite alcanzado: saldo ${money(saldo)} sobre ${money(limite)}.`;
+  } else {
+    alerta.className = "cuenta-alerta cuenta-alerta-warn";
+    alerta.textContent = `Saldo pendiente: ${money(saldo)}.`;
+  }
+
   table($("#tabla-cuenta"), [
     { key: "fecha", label: "Fecha" },
     { key: "comprobante", label: "Comprobante" },
@@ -269,7 +363,17 @@ async function loadCuenta(clienteId, scroll = true) {
     { key: "debe", label: "Debe", format: money },
     { key: "haber", label: "Haber", format: money },
     { key: "saldo", label: "Saldo", format: money },
+    { key: "observaciones", label: "Observaciones" },
   ], data.movimientos || []);
+
+  table($("#tabla-cliente-ventas"), [
+    { key: "id", label: "Venta" },
+    { key: "fecha", label: "Fecha" },
+    { key: "tipo", label: "Medio" },
+    { key: "total", label: "Total", format: money },
+    { key: "usuario", label: "Usuario" },
+  ], data.ventas || [], (r) => `<button type="button" data-print-ticket="${r.id}">Ticket</button>`);
+
   if (scroll) $("#cuenta-panel").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -471,8 +575,19 @@ document.addEventListener("click", async (ev) => {
       }
     }
   }
-  if (ev.target.dataset.editCliente) fillForm("#cliente-form", (await api("/api/clientes")).find((c) => String(c.id) === ev.target.dataset.editCliente));
+  if (ev.target.dataset.editCliente) editarCliente(state.clientes.find((c) => String(c.id) === String(ev.target.dataset.editCliente)));
   if (ev.target.dataset.cuenta) await loadCuenta(ev.target.dataset.cuenta);
+  if (ev.target.dataset.delCliente) {
+    const cliente = state.clientes.find((c) => String(c.id) === String(ev.target.dataset.delCliente));
+    if (cliente && confirm(`¿Dar de baja al cliente "${cliente.nombre}"?`)) {
+      try {
+        await api(`/api/clientes/${cliente.id}`, { method: "DELETE" });
+        await loadClientes();
+      } catch (error) {
+        alert(error.message);
+      }
+    }
+  }
   if (ev.target.dataset.removeIndex !== undefined) {
     const index = Number(ev.target.dataset.removeIndex);
     state.ticket.splice(index, 1);
@@ -660,25 +775,140 @@ $("#recalcular-categoria-form").onsubmit = async (ev) => {
 
 $("#cliente-form").onsubmit = async (ev) => {
   ev.preventDefault();
-  await api("/api/clientes", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
-  ev.target.reset();
-  await loadClientes();
+
+  try {
+    await api("/api/clientes", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
+    });
+    resetClienteForm();
+    await loadClientes();
+  } catch (error) {
+    alert(error.message);
+  }
 };
+
+$("#nuevo-cliente").onclick = () => {
+  resetClienteForm();
+  $("#cliente-form").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("#cliente-form").elements.nombre.focus();
+};
+
+$("#cancelar-cliente").onclick = resetClienteForm;
+$("#buscar-clientes-local").addEventListener("input", renderClientesLocal);
 
 $("#pago-form").onsubmit = async (ev) => {
   ev.preventDefault();
   const data = Object.fromEntries(new FormData(ev.target));
-  await api(`/api/clientes/${data.cliente_id}/pago`, { method: "POST", body: JSON.stringify(data) });
-  ev.target.reset();
-  await loadClientes();
-  await loadCuenta(data.cliente_id, false);
+
+  try {
+    await api(`/api/clientes/${data.cliente_id}/pago`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    ev.target.reset();
+    ev.target.elements.cliente_id.value = data.cliente_id;
+    await loadClientes();
+    await loadCuenta(data.cliente_id, false);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#ajuste-cuenta-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const data = Object.fromEntries(new FormData(ev.target));
+
+  try {
+    await api(`/api/clientes/${data.cliente_id}/ajuste`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    ev.target.reset();
+    ev.target.elements.cliente_id.value = data.cliente_id;
+    await loadClientes();
+    await loadCuenta(data.cliente_id, false);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#filtrar-cuenta").onclick = async () => {
+  if (!state.cuenta) return;
+  await loadCuenta(state.cuenta.cliente.id, false, {
+    desde: $("#cuenta-desde").value,
+    hasta: $("#cuenta-hasta").value,
+  });
+};
+
+$("#limpiar-filtro-cuenta").onclick = async () => {
+  if (!state.cuenta) return;
+  $("#cuenta-desde").value = "";
+  $("#cuenta-hasta").value = "";
+  await loadCuenta(state.cuenta.cliente.id, false);
+};
+
+$("#cerrar-cuenta-panel").onclick = () => {
+  $("#cuenta-panel").hidden = true;
+  state.cuenta = null;
+};
+
+$("#whatsapp-cliente").onclick = () => {
+  if (!state.cuenta) return;
+
+  const numero = String(state.cuenta.cliente.whatsapp || state.cuenta.cliente.telefono || "")
+    .replace(/\D/g, "");
+
+  if (!numero) return alert("El cliente no tiene WhatsApp o teléfono cargado.");
+
+  const saldo = money(state.cuenta.cliente.saldo);
+  const texto = encodeURIComponent(
+    `Hola ${state.cuenta.cliente.nombre}. Su saldo actual en Bebidas San Martín es ${saldo}.`
+  );
+
+  window.open(`https://wa.me/${numero}?text=${texto}`, "_blank");
 };
 
 $("#print-cuenta").onclick = () => {
   const d = state.cuenta;
   if (!d) return;
-  const rows = (d.movimientos || []).map((m) => `<tr><td>${escapeHtml(m.fecha)}</td><td>${escapeHtml(m.comprobante)}</td><td>${escapeHtml(m.concepto)}</td><td>${money(m.debe)}</td><td>${money(m.haber)}</td><td>${money(m.saldo)}</td></tr>`).join("");
-  printWindow(`Cuenta corriente - ${d.cliente.nombre}`, `<p>Cliente: ${escapeHtml(d.cliente.nombre)}</p><div class="total">Saldo ${money(d.cliente.saldo)}</div><table><thead><tr><th>Fecha</th><th>Comp.</th><th>Concepto</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead><tbody>${rows}</tbody></table>`);
+
+  const movimientos = (d.movimientos || []).map((m) => `
+    <tr>
+      <td>${escapeHtml(m.fecha)}</td>
+      <td>${escapeHtml(m.comprobante)}</td>
+      <td>${escapeHtml(m.concepto)}</td>
+      <td>${money(m.debe)}</td>
+      <td>${money(m.haber)}</td>
+      <td>${money(m.saldo)}</td>
+    </tr>
+  `).join("");
+
+  printWindow(
+    `Cuenta corriente - ${d.cliente.nombre}`,
+    `
+      <p>
+        Cliente: ${escapeHtml(d.cliente.nombre)}<br>
+        CUIT/DNI: ${escapeHtml(d.cliente.cuit || "-")}<br>
+        Teléfono: ${escapeHtml(d.cliente.telefono || "-")}
+      </p>
+      <div class="total">Saldo ${money(d.cliente.saldo)}</div>
+      <p>Límite: ${money(d.cliente.limite_credito)} · Disponible: ${money(d.credito_disponible)}</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Comp.</th>
+            <th>Concepto</th>
+            <th>Debe</th>
+            <th>Haber</th>
+            <th>Saldo</th>
+          </tr>
+        </thead>
+        <tbody>${movimientos}</tbody>
+      </table>
+    `
+  );
 };
 
 function agregarProductoAlTicket() {

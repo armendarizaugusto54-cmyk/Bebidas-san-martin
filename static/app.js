@@ -381,6 +381,20 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
 
+  if (ev.key === "F8" && !modalAbierto) {
+    ev.preventDefault();
+
+    if (!state.ticket.length) return;
+
+    if (!confirm("¿Vaciar todos los productos del ticket?")) return;
+
+    state.ticket = [];
+    renderTicket();
+    $("#venta-cantidad").value = 1;
+    openProductSearch();
+    return;
+  }
+
   if (ev.key === "Delete" && !modalAbierto) {
     const seleccionada = $("#ticket tbody tr.ticket-selected");
     if (seleccionada) {

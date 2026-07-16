@@ -218,6 +218,55 @@ def ensure_schema():
                 eliminar INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(usuario_id, modulo)
             );
+
+            CREATE TABLE IF NOT EXISTS proveedores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                cuit TEXT,
+                telefono TEXT,
+                whatsapp TEXT,
+                direccion TEXT,
+                localidad TEXT,
+                email TEXT,
+                observaciones TEXT,
+                saldo REAL DEFAULT 0,
+                activo INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS compras (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT,
+                proveedor_id INTEGER,
+                comprobante TEXT,
+                tipo_pago TEXT,
+                total REAL DEFAULT 0,
+                estado TEXT DEFAULT 'ACTIVA',
+                usuario TEXT,
+                observaciones TEXT,
+                motivo_anulacion TEXT,
+                usuario_anulacion TEXT,
+                fecha_anulacion TEXT
+            );
+            CREATE TABLE IF NOT EXISTS compra_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                compra_id INTEGER,
+                producto_id INTEGER,
+                cantidad REAL DEFAULT 0,
+                costo REAL DEFAULT 0,
+                subtotal REAL DEFAULT 0,
+                costo_anterior REAL DEFAULT 0,
+                venta_anterior REAL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS proveedor_cuenta (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proveedor_id INTEGER,
+                fecha TEXT,
+                comprobante TEXT,
+                concepto TEXT,
+                debe REAL DEFAULT 0,
+                haber REAL DEFAULT 0,
+                saldo REAL DEFAULT 0,
+                observaciones TEXT
+            );
             """
         )
         if not conn.execute("SELECT id FROM usuarios LIMIT 1").fetchone():
@@ -254,7 +303,7 @@ def ensure_schema():
             """
         )
 
-        modulos = ("Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes", "Herramientas", "Usuarios")
+        modulos = ("Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Compras", "Proveedores", "Reportes", "Usuarios")
         usuarios_existentes = conn.execute("SELECT id,rol FROM usuarios").fetchall()
         for usuario in usuarios_existentes:
             for modulo in modulos:
@@ -268,7 +317,7 @@ def ensure_schema():
                 if usuario["rol"] == "ADMIN":
                     valores = (1, 1, 1, 1)
                 else:
-                    if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}:
+                    if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Compras", "Proveedores", "Reportes"}:
                         valores = (1, 1, 0, 0)
                     else:
                         valores = (0, 0, 0, 0)
@@ -383,7 +432,8 @@ MODULOS_PERMISOS = (
     "Clientes",
     "Caja",
     "Reportes",
-    "Herramientas",
+    "Compras",
+    "Proveedores",
     "Usuarios",
 )
 
@@ -470,7 +520,7 @@ def guardar_usuario():
                 for modulo in MODULOS_PERMISOS:
                     valores = (1, 1, 1, 1) if rol == "ADMIN" else (
                         (1, 1, 0, 0)
-                        if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}
+                        if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Compras", "Proveedores", "Reportes"}
                         else (0, 0, 0, 0)
                     )
                     conn.execute(
@@ -585,8 +635,477 @@ def options():
                 ORDER BY p.nombre
                 """
             ),
+            "proveedores": rows(
+                "SELECT id,nombre,saldo FROM proveedores WHERE activo=1 ORDER BY nombre"
+            ),
         }
     )
+
+
+
+@app.get("/api/proveedores")
+def listar_proveedores():
+    if not can("Proveedores"):
+        return forbidden()
+
+    return jsonify(rows(
+        """
+        SELECT p.*,
+               COALESCE((SELECT COUNT(*) FROM compras c WHERE c.proveedor_id=p.id AND c.estado='ACTIVA'),0) compras,
+               COALESCE((SELECT SUM(total) FROM compras c WHERE c.proveedor_id=p.id AND c.estado='ACTIVA'),0) total_comprado
+        FROM proveedores p
+        WHERE p.activo=1
+        ORDER BY p.nombre
+        """
+    ))
+
+
+@app.post("/api/proveedores")
+def guardar_proveedor():
+    if not can("Proveedores", "agregar"):
+        return forbidden()
+
+    data = request.json or {}
+    proveedor_id = data.get("id")
+    nombre = data.get("nombre", "").strip()
+    cuit = data.get("cuit", "").strip()
+
+    if not nombre:
+        return jsonify({"error": "El nombre del proveedor es obligatorio."}), 400
+
+    if cuit:
+        duplicado = one(
+            "SELECT id FROM proveedores WHERE cuit=? AND activo=1 AND id<>COALESCE(?,0)",
+            (cuit, proveedor_id),
+        )
+        if duplicado:
+            return jsonify({"error": "Ya existe un proveedor activo con ese CUIT."}), 400
+
+    params = (
+        nombre,
+        cuit,
+        data.get("telefono", "").strip(),
+        data.get("whatsapp", "").strip(),
+        data.get("direccion", "").strip(),
+        data.get("localidad", "").strip(),
+        data.get("email", "").strip(),
+        data.get("observaciones", "").strip(),
+    )
+
+    if proveedor_id:
+        if not can("Proveedores", "editar"):
+            return forbidden()
+        execute(
+            """
+            UPDATE proveedores
+            SET nombre=?,cuit=?,telefono=?,whatsapp=?,direccion=?,localidad=?,email=?,observaciones=?
+            WHERE id=?
+            """,
+            params + (proveedor_id,),
+        )
+        audit("proveedor_editado", nombre)
+    else:
+        proveedor_id = execute(
+            """
+            INSERT INTO proveedores(nombre,cuit,telefono,whatsapp,direccion,localidad,email,observaciones,saldo,activo)
+            VALUES(?,?,?,?,?,?,?,?,0,1)
+            """,
+            params,
+        )
+        audit("proveedor_creado", nombre)
+
+    return jsonify({"ok": True, "id": proveedor_id})
+
+
+@app.delete("/api/proveedores/<int:proveedor_id>")
+def baja_proveedor(proveedor_id):
+    if not can("Proveedores", "eliminar"):
+        return forbidden()
+
+    proveedor = one("SELECT * FROM proveedores WHERE id=?", (proveedor_id,))
+    if not proveedor:
+        return jsonify({"error": "Proveedor inexistente."}), 404
+    if abs(money(proveedor["saldo"])) > 0.009:
+        return jsonify({"error": "No se puede dar de baja un proveedor con saldo pendiente."}), 400
+
+    execute("UPDATE proveedores SET activo=0 WHERE id=?", (proveedor_id,))
+    audit("proveedor_baja", proveedor["nombre"])
+    return jsonify({"ok": True})
+
+
+@app.get("/api/proveedores/<int:proveedor_id>/cuenta")
+def cuenta_proveedor(proveedor_id):
+    if not can("Proveedores"):
+        return forbidden()
+
+    proveedor = one("SELECT * FROM proveedores WHERE id=?", (proveedor_id,))
+    if not proveedor:
+        return jsonify({"error": "Proveedor inexistente."}), 404
+
+    movimientos = rows(
+        """
+        SELECT *
+        FROM proveedor_cuenta
+        WHERE proveedor_id=?
+        ORDER BY datetime(fecha) DESC, id DESC
+        """,
+        (proveedor_id,),
+    )
+
+    resumen = one(
+        """
+        SELECT COALESCE(SUM(debe),0) debe,
+               COALESCE(SUM(haber),0) haber,
+               COUNT(*) movimientos
+        FROM proveedor_cuenta
+        WHERE proveedor_id=?
+        """,
+        (proveedor_id,),
+    )
+
+    compras = rows(
+        """
+        SELECT id,fecha,comprobante,tipo_pago,total,estado,usuario
+        FROM compras
+        WHERE proveedor_id=?
+        ORDER BY datetime(fecha) DESC,id DESC
+        LIMIT 100
+        """,
+        (proveedor_id,),
+    )
+
+    return jsonify({
+        "proveedor": proveedor,
+        "movimientos": movimientos,
+        "resumen": resumen,
+        "compras": compras,
+    })
+
+
+@app.post("/api/proveedores/<int:proveedor_id>/pago")
+def pago_proveedor(proveedor_id):
+    if not can("Proveedores", "agregar"):
+        return forbidden()
+
+    proveedor = one("SELECT * FROM proveedores WHERE id=? AND activo=1", (proveedor_id,))
+    if not proveedor:
+        return jsonify({"error": "Proveedor inexistente."}), 404
+
+    data = request.json or {}
+    importe = money(data.get("importe"))
+    if importe <= 0:
+        return jsonify({"error": "El importe debe ser mayor a cero."}), 400
+
+    saldo_nuevo = round(money(proveedor["saldo"]) - importe, 2)
+
+    with db() as conn:
+        conn.execute("UPDATE proveedores SET saldo=? WHERE id=?", (saldo_nuevo, proveedor_id))
+        conn.execute(
+            """
+            INSERT INTO proveedor_cuenta
+            (proveedor_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+            VALUES(?,?,?,?,?,?,?,?)
+            """,
+            (
+                proveedor_id,
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                data.get("comprobante", "").strip(),
+                "PAGO",
+                0,
+                importe,
+                saldo_nuevo,
+                data.get("observaciones", "").strip(),
+            ),
+        )
+        conn.commit()
+
+    audit("pago_proveedor", f"{proveedor['nombre']} - {importe}")
+    return jsonify({"ok": True, "saldo": saldo_nuevo})
+
+
+@app.get("/api/compras")
+def listar_compras():
+    if not can("Compras"):
+        return forbidden()
+
+    proveedor_id = request.args.get("proveedor_id")
+    desde = request.args.get("desde")
+    hasta = request.args.get("hasta")
+
+    filtros = ["1=1"]
+    params = []
+
+    if proveedor_id:
+        filtros.append("c.proveedor_id=?")
+        params.append(proveedor_id)
+    if desde:
+        filtros.append("date(c.fecha)>=date(?)")
+        params.append(desde)
+    if hasta:
+        filtros.append("date(c.fecha)<=date(?)")
+        params.append(hasta)
+
+    return jsonify(rows(
+        f"""
+        SELECT c.*,p.nombre proveedor
+        FROM compras c
+        JOIN proveedores p ON p.id=c.proveedor_id
+        WHERE {' AND '.join(filtros)}
+        ORDER BY datetime(c.fecha) DESC,c.id DESC
+        LIMIT 300
+        """,
+        params,
+    ))
+
+
+@app.post("/api/compras")
+def guardar_compra():
+    if not can("Compras", "agregar"):
+        return forbidden()
+
+    data = request.json or {}
+    proveedor_id = data.get("proveedor_id")
+    items = data.get("items") or []
+    tipo_pago = data.get("tipo_pago", "EFECTIVO").upper()
+    actualizar_costos = bool(data.get("actualizar_costos", True))
+    recalcular_venta = bool(data.get("recalcular_venta", True))
+
+    if not proveedor_id:
+        return jsonify({"error": "Seleccione un proveedor."}), 400
+    if not items:
+        return jsonify({"error": "Agregue al menos un producto a la compra."}), 400
+    if tipo_pago not in {"EFECTIVO", "TRANSFERENCIA", "CUENTA CORRIENTE", "OTRO"}:
+        return jsonify({"error": "Forma de pago inválida."}), 400
+
+    proveedor = one("SELECT * FROM proveedores WHERE id=? AND activo=1", (proveedor_id,))
+    if not proveedor:
+        return jsonify({"error": "Proveedor inexistente."}), 404
+
+    productos_validos = []
+    total = 0
+
+    for item in items:
+        producto = one(
+            """
+            SELECT p.*,COALESCE(c.ganancia,0) ganancia_categoria
+            FROM productos p
+            LEFT JOIN categorias c ON c.id=p.categoria_id
+            WHERE p.id=? AND p.activo=1
+            """,
+            (item.get("producto_id"),),
+        )
+        if not producto:
+            return jsonify({"error": "Uno de los productos ya no existe."}), 400
+
+        cantidad = money(item.get("cantidad"))
+        costo = money(item.get("costo"))
+        if cantidad <= 0 or costo < 0:
+            return jsonify({"error": f"Cantidad o costo inválido para {producto['nombre']}."}), 400
+
+        subtotal = round(cantidad * costo, 2)
+        total += subtotal
+        productos_validos.append((producto, cantidad, costo, subtotal))
+
+    total = round(total, 2)
+    ahora = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with db() as conn:
+        compra_id = conn.execute(
+            """
+            INSERT INTO compras
+            (fecha,proveedor_id,comprobante,tipo_pago,total,estado,usuario,observaciones)
+            VALUES(?,?,?,?,?,'ACTIVA',?,?)
+            """,
+            (
+                ahora,
+                proveedor_id,
+                data.get("comprobante", "").strip(),
+                tipo_pago,
+                total,
+                session["user"]["usuario"],
+                data.get("observaciones", "").strip(),
+            ),
+        ).lastrowid
+
+        for producto, cantidad, costo, subtotal in productos_validos:
+            conn.execute(
+                """
+                INSERT INTO compra_items
+                (compra_id,producto_id,cantidad,costo,subtotal,costo_anterior,venta_anterior)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (
+                    compra_id,
+                    producto["id"],
+                    cantidad,
+                    costo,
+                    subtotal,
+                    money(producto["precio_compra"]),
+                    money(producto["precio_venta"]),
+                ),
+            )
+
+            nuevo_costo = costo if actualizar_costos else money(producto["precio_compra"])
+            nueva_venta = money(producto["precio_venta"])
+
+            if actualizar_costos and recalcular_venta:
+                nueva_venta = calcular_precio_venta(
+                    nuevo_costo,
+                    money(producto["ganancia_categoria"]),
+                )
+
+            conn.execute(
+                """
+                UPDATE productos
+                SET stock=COALESCE(stock,0)+?,
+                    precio_compra=?,
+                    precio_venta=?
+                WHERE id=?
+                """,
+                (cantidad, nuevo_costo, nueva_venta, producto["id"]),
+            )
+
+        if tipo_pago == "CUENTA CORRIENTE":
+            saldo_nuevo = round(money(proveedor["saldo"]) + total, 2)
+            conn.execute("UPDATE proveedores SET saldo=? WHERE id=?", (saldo_nuevo, proveedor_id))
+            conn.execute(
+                """
+                INSERT INTO proveedor_cuenta
+                (proveedor_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    proveedor_id,
+                    ahora,
+                    str(compra_id),
+                    "COMPRA",
+                    total,
+                    0,
+                    saldo_nuevo,
+                    data.get("observaciones", "").strip(),
+                ),
+            )
+
+        conn.commit()
+
+    audit("compra_registrada", f"Compra {compra_id} - {proveedor['nombre']} - {total}")
+    return jsonify({"ok": True, "compra_id": compra_id, "total": total})
+
+
+@app.get("/api/compras/<int:compra_id>")
+def detalle_compra(compra_id):
+    if not can("Compras"):
+        return forbidden()
+
+    compra = one(
+        """
+        SELECT c.*,p.nombre proveedor,p.cuit proveedor_cuit,p.telefono proveedor_telefono
+        FROM compras c
+        JOIN proveedores p ON p.id=c.proveedor_id
+        WHERE c.id=?
+        """,
+        (compra_id,),
+    )
+    if not compra:
+        return jsonify({"error": "Compra inexistente."}), 404
+
+    items = rows(
+        """
+        SELECT i.*,p.codigo,p.nombre producto
+        FROM compra_items i
+        JOIN productos p ON p.id=i.producto_id
+        WHERE i.compra_id=?
+        ORDER BY i.id
+        """,
+        (compra_id,),
+    )
+
+    return jsonify({"compra": compra, "items": items})
+
+
+@app.post("/api/compras/<int:compra_id>/anular")
+def anular_compra(compra_id):
+    if not can("Compras", "eliminar"):
+        return forbidden()
+
+    data = request.json or {}
+    motivo = data.get("motivo", "").strip()
+    if not motivo:
+        return jsonify({"error": "Ingrese el motivo de la anulación."}), 400
+
+    compra = one("SELECT * FROM compras WHERE id=?", (compra_id,))
+    if not compra:
+        return jsonify({"error": "Compra inexistente."}), 404
+    if compra["estado"] == "ANULADA":
+        return jsonify({"error": "La compra ya está anulada."}), 400
+
+    items = rows("SELECT * FROM compra_items WHERE compra_id=?", (compra_id,))
+    proveedor = one("SELECT * FROM proveedores WHERE id=?", (compra["proveedor_id"],))
+
+    with db() as conn:
+        for item in items:
+            producto = conn.execute("SELECT stock FROM productos WHERE id=?", (item["producto_id"],)).fetchone()
+            stock_actual = money(producto["stock"]) if producto else 0
+            if stock_actual < money(item["cantidad"]):
+                return jsonify({
+                    "error": "No se puede anular: uno de los productos ya no tiene stock suficiente para devolver."
+                }), 400
+
+        for item in items:
+            conn.execute(
+                """
+                UPDATE productos
+                SET stock=stock-?,
+                    precio_compra=?,
+                    precio_venta=?
+                WHERE id=?
+                """,
+                (
+                    item["cantidad"],
+                    item["costo_anterior"],
+                    item["venta_anterior"],
+                    item["producto_id"],
+                ),
+            )
+
+        if compra["tipo_pago"] == "CUENTA CORRIENTE" and proveedor:
+            saldo_nuevo = round(money(proveedor["saldo"]) - money(compra["total"]), 2)
+            conn.execute("UPDATE proveedores SET saldo=? WHERE id=?", (saldo_nuevo, proveedor["id"]))
+            conn.execute(
+                """
+                INSERT INTO proveedor_cuenta
+                (proveedor_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                (
+                    proveedor["id"],
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    str(compra_id),
+                    "ANULACIÓN DE COMPRA",
+                    0,
+                    compra["total"],
+                    saldo_nuevo,
+                    motivo,
+                ),
+            )
+
+        conn.execute(
+            """
+            UPDATE compras
+            SET estado='ANULADA',motivo_anulacion=?,usuario_anulacion=?,fecha_anulacion=?
+            WHERE id=?
+            """,
+            (
+                motivo,
+                session["user"]["usuario"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                compra_id,
+            ),
+        )
+        conn.commit()
+
+    audit("compra_anulada", f"Compra {compra_id} - {motivo}")
+    return jsonify({"ok": True})
 
 
 @app.get("/api/dashboard")

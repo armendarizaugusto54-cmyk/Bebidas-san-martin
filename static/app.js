@@ -3,7 +3,7 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-let state = { user: null, options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, productosFiltrados: [], clientesFiltrados: [] };
+let state = { user: null, options: {}, productos: [], categorias: [], clientes: [], ticket: [], current: "inicio", lastReport: null, cuenta: null, cajaActual: null, cajaDetalle: null, productosFiltrados: [], clientesFiltrados: [] };
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -469,33 +469,268 @@ async function loadVentas() {
   renderTicket();
 }
 
-function sistemaCaja(caja) {
-  return {
-    efectivo: Number(caja.apertura || 0) + Number(caja.efectivo || 0) + Number(caja.ingresos || 0) - Number(caja.gastos || 0),
-    transferencia: Number(caja.transferencia || 0),
-    debito: Number(caja.debito || 0),
-    credito: Number(caja.credito || 0),
-    posnet: Number(caja.posnet || 0),
-  };
+const CAJA_MEDIOS = [
+  ["efectivo", "Efectivo"],
+  ["transferencia", "Transferencia"],
+  ["debito", "Débito"],
+  ["credito", "Crédito"],
+  ["posnet", "Posnet"],
+  ["cuenta_corriente", "Cuenta corriente"],
+];
+
+const DENOMINACIONES = [20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10];
+
+function diferenciaClase(valor) {
+  const n = Number(valor || 0);
+  if (Math.abs(n) < 0.01) return "diff-ok";
+  return n < 0 ? "diff-bad" : "diff-sobra";
+}
+
+function actualizarArqueo() {
+  let totalSistema = 0;
+  let totalContado = 0;
+
+  CAJA_MEDIOS.forEach(([medio]) => {
+    const sistema = Number($(`[data-sistema="${medio}"]`)?.dataset.valor || 0);
+    const input = $(`[name="${medio}_contado"]`);
+    const contado = Number(input?.value || 0);
+    const diferencia = contado - sistema;
+
+    totalSistema += sistema;
+    totalContado += contado;
+
+    const celda = $(`[data-diferencia="${medio}"]`);
+    if (celda) {
+      celda.textContent = money(diferencia);
+      celda.className = diferenciaClase(diferencia);
+    }
+  });
+
+  const diferenciaTotal = totalContado - totalSistema;
+  $("#arqueo-total-sistema").textContent = money(totalSistema);
+  $("#arqueo-total-contado").textContent = money(totalContado);
+  $("#arqueo-total-diferencia").textContent = money(diferenciaTotal);
+  $("#arqueo-total-diferencia").className = diferenciaClase(diferenciaTotal);
+
+  const resultado = $("#arqueo-resultado");
+  if (Math.abs(diferenciaTotal) < 0.01) {
+    resultado.className = "arqueo-resultado correcto";
+    resultado.textContent = "Caja correcta: no hay diferencias.";
+  } else if (diferenciaTotal < 0) {
+    resultado.className = "arqueo-resultado faltante";
+    resultado.textContent = `Faltante de ${money(Math.abs(diferenciaTotal))}.`;
+  } else {
+    resultado.className = "arqueo-resultado sobrante";
+    resultado.textContent = `Sobrante de ${money(diferenciaTotal)}.`;
+  }
+}
+
+function renderBilletes() {
+  $("#billetes-grid").innerHTML = DENOMINACIONES.map((denominacion) => `
+    <label>
+      <span>${money(denominacion)}</span>
+      <input type="number" min="0" step="1" value="0" data-billete="${denominacion}">
+      <strong data-billete-subtotal="${denominacion}">$0.00</strong>
+    </label>
+  `).join("");
+  $("#billetes-total").textContent = money(0);
+}
+
+function actualizarBilletes() {
+  let total = 0;
+
+  $$("[data-billete]").forEach((input) => {
+    const denominacion = Number(input.dataset.billete);
+    const cantidad = Number(input.value || 0);
+    const subtotal = denominacion * cantidad;
+    total += subtotal;
+    $(`[data-billete-subtotal="${denominacion}"]`).textContent = money(subtotal);
+  });
+
+  $("#billetes-total").textContent = money(total);
+  const efectivo = $('[name="efectivo_contado"]');
+  if (efectivo) {
+    efectivo.value = total.toFixed(2);
+    actualizarArqueo();
+  }
+}
+
+function renderArqueo(sistema = {}) {
+  $("#arqueo-grid").innerHTML = CAJA_MEDIOS.map(([medio, etiqueta]) => {
+    const valor = Number(sistema[medio] || 0);
+    return `
+      <tr>
+        <td><strong>${etiqueta}</strong></td>
+        <td data-sistema="${medio}" data-valor="${valor}">${money(valor)}</td>
+        <td>
+          <input
+            name="${medio}_contado"
+            type="number"
+            min="0"
+            step="0.01"
+            value="${valor.toFixed(2)}"
+            required
+          >
+        </td>
+        <td data-diferencia="${medio}" class="diff-ok">${money(0)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  actualizarArqueo();
 }
 
 async function loadCaja() {
   const actual = await api("/api/caja/actual");
-  const sistema = sistemaCaja(actual || {});
-  const total = Object.values(sistema).reduce((a, b) => a + b, 0);
-  $("#caja-estado").textContent = actual.id ? "Abierta" : "Cerrada";
-  $("#caja-apertura").textContent = money(actual.apertura);
-  $("#caja-entradas").textContent = money(Number(actual.efectivo || 0) + Number(actual.transferencia || 0) + Number(actual.debito || 0) + Number(actual.credito || 0) + Number(actual.posnet || 0) + Number(actual.ingresos || 0));
-  $("#caja-total").textContent = money(total);
-  $("#arqueo-grid").innerHTML = ["efectivo", "transferencia", "debito", "credito", "posnet"].map((m) => `<label>${m}</label><strong>${money(sistema[m])}</strong><input name="${m}_contado" type="number" step="0.01" value="${sistema[m].toFixed(2)}">`).join("");
+  state.cajaActual = actual;
+
+  const caja = actual.caja || {};
+  const sistema = actual.sistema || {};
+  const abierta = Boolean(caja.id);
+
+  $("#caja-estado-badge").textContent = abierta ? "ABIERTA" : "CERRADA";
+  $("#caja-estado-badge").className = `caja-estado-badge ${abierta ? "abierta" : "cerrada"}`;
+  $("#caja-apertura").textContent = money(caja.apertura);
+  $("#caja-entradas").textContent = money(
+    Number(caja.efectivo || 0) +
+    Number(caja.transferencia || 0) +
+    Number(caja.debito || 0) +
+    Number(caja.credito || 0) +
+    Number(caja.posnet || 0) +
+    Number(caja.cuenta_corriente || 0) +
+    Number(caja.ingresos || 0) -
+    Number(caja.gastos || 0)
+  );
+  $("#caja-total").textContent = money(Object.values(sistema).reduce((a, b) => a + Number(b || 0), 0));
+
+  $("#abrir-caja-form").hidden = abierta;
+  $("#mov-caja-form").hidden = !abierta;
+  $("#cerrar-caja-form").hidden = !abierta;
+
+  if (abierta) {
+    renderArqueo(sistema);
+    renderBilletes();
+  }
+
   const cajas = await api("/api/caja");
+  const ultimaCerrada = cajas.find((c) => c.estado === "CERRADA");
+  $("#caja-diferencia").textContent = money(ultimaCerrada?.diferencia || 0);
+  $("#caja-diferencia").className = diferenciaClase(ultimaCerrada?.diferencia || 0);
+
   table($("#tabla-caja"), [
+    { key: "id", label: "N.º" },
     { key: "fecha", label: "Fecha" },
     { key: "estado", label: "Estado" },
+    { key: "usuario_apertura", label: "Abrió" },
+    { key: "usuario_cierre", label: "Cerró" },
     { key: "apertura", label: "Apertura", format: money },
-    { key: "cierre", label: "Cierre", format: money },
-    { key: "diferencia", label: "Diferencia", format: money },
-  ], cajas);
+    { key: "total_sistema", label: "Sistema", format: money },
+    { key: "total_contado", label: "Contado", format: money },
+    { key: "diferencia", label: "Diferencia", format: (v) => `<span class="${diferenciaClase(v)}">${money(v)}</span>` },
+    { key: "corregido", label: "Corregida", format: (v) => Number(v) ? "Sí" : "No" },
+  ], cajas, (r) => `<button type="button" data-ver-caja="${r.id}">Ver detalle</button>`);
+}
+
+function cajaDetalleFilas(data) {
+  const arqueo = data.arqueo || {};
+  return CAJA_MEDIOS.map(([medio, etiqueta]) => {
+    const sistema = Number(arqueo[`${medio}_sistema`] ?? data.sistema?.[medio] ?? 0);
+    const contado = Number(arqueo[`${medio}_contado`] ?? 0);
+    const diferencia = contado - sistema;
+    return { medio: etiqueta, sistema, contado, diferencia };
+  });
+}
+
+async function verDetalleCaja(cajaId) {
+  const data = await api(`/api/caja/${cajaId}`);
+  state.cajaDetalle = data;
+
+  $("#caja-detalle-panel").hidden = false;
+  $("#caja-detalle-title").textContent = `Detalle de caja N.º ${data.caja.id}`;
+  $("#caja-detalle-sub").textContent =
+    `${data.caja.fecha || ""} · Abrió: ${data.caja.usuario_apertura || "-"} · Cerró: ${data.caja.usuario_cierre || "-"}`;
+
+  const filas = cajaDetalleFilas(data);
+  const totalSistema = filas.reduce((sum, f) => sum + f.sistema, 0);
+  const totalContado = filas.reduce((sum, f) => sum + f.contado, 0);
+  const diferencia = totalContado - totalSistema;
+
+  $("#caja-detalle-resumen").innerHTML = `
+    <article><span>Sistema</span><strong>${money(totalSistema)}</strong></article>
+    <article><span>Contado</span><strong>${money(totalContado)}</strong></article>
+    <article><span>Diferencia</span><strong class="${diferenciaClase(diferencia)}">${money(diferencia)}</strong></article>
+    <article><span>Estado</span><strong>${data.caja.estado}</strong></article>
+  `;
+
+  table($("#tabla-caja-detalle"), [
+    { key: "medio", label: "Medio" },
+    { key: "sistema", label: "Sistema", format: money },
+    { key: "contado", label: "Contado", format: money },
+    { key: "diferencia", label: "Diferencia", format: (v) => `<span class="${diferenciaClase(v)}">${money(v)}</span>` },
+  ], filas);
+
+  table($("#tabla-caja-movimientos"), [
+    { key: "fecha", label: "Fecha" },
+    { key: "tipo", label: "Tipo" },
+    { key: "descripcion", label: "Descripción" },
+    { key: "importe", label: "Importe", format: money },
+  ], data.movimientos || []);
+
+  const form = $("#corregir-caja-form");
+  form.hidden = state.user?.rol !== "ADMIN" || data.caja.estado !== "CERRADA";
+  form.elements.caja_id.value = data.caja.id;
+
+  if (!form.hidden) {
+    $("#correccion-grid").innerHTML = filas.map((fila, index) => {
+      const medio = CAJA_MEDIOS[index][0];
+      return `
+        <label>${fila.medio}
+          <input name="${medio}_contado" type="number" min="0" step="0.01" value="${fila.contado.toFixed(2)}" required>
+        </label>
+      `;
+    }).join("");
+    form.elements.motivo.value = "";
+  }
+
+  $("#caja-detalle-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function imprimirCierreCaja() {
+  const data = state.cajaDetalle;
+  if (!data) return;
+
+  const filas = cajaDetalleFilas(data);
+  const cuerpo = filas.map((f) => `
+    <tr>
+      <td>${escapeHtml(f.medio)}</td>
+      <td>${money(f.sistema)}</td>
+      <td>${money(f.contado)}</td>
+      <td>${money(f.diferencia)}</td>
+    </tr>
+  `).join("");
+
+  const totalSistema = filas.reduce((s, f) => s + f.sistema, 0);
+  const totalContado = filas.reduce((s, f) => s + f.contado, 0);
+
+  printWindow(
+    `Cierre de caja N.º ${data.caja.id}`,
+    `
+      <p>
+        Fecha: ${escapeHtml(data.caja.fecha || "")}<br>
+        Usuario apertura: ${escapeHtml(data.caja.usuario_apertura || "-")}<br>
+        Usuario cierre: ${escapeHtml(data.caja.usuario_cierre || "-")}
+      </p>
+      <table>
+        <thead><tr><th>Medio</th><th>Sistema</th><th>Contado</th><th>Diferencia</th></tr></thead>
+        <tbody>${cuerpo}</tbody>
+      </table>
+      <div class="total">Sistema ${money(totalSistema)}</div>
+      <div class="total">Contado ${money(totalContado)}</div>
+      <div class="total">Diferencia ${money(totalContado - totalSistema)}</div>
+      <p>Observaciones: ${escapeHtml(data.arqueo?.observaciones || "-")}</p>
+      ${data.arqueo?.corregido ? `<p><strong>Corregida por ${escapeHtml(data.arqueo.usuario_correccion || "")}</strong><br>${escapeHtml(data.arqueo.motivo_correccion || "")}</p>` : ""}
+    `
+  );
 }
 
 async function loadReportes(ev) {
@@ -603,6 +838,7 @@ document.addEventListener("click", async (ev) => {
     const data = await api(`/api/ventas/${ev.target.dataset.printTicket}`);
     printVenta("Ticket", data, false);
   }
+  if (ev.target.dataset.verCaja) await verDetalleCaja(ev.target.dataset.verCaja);
   if (ev.target.dataset.backup) window.location.href = `/api/backups/${encodeURIComponent(ev.target.dataset.backup)}`;
 });
 
@@ -1074,21 +1310,101 @@ $("#venta-form").onsubmit = async (ev) => {
 
 $("#abrir-caja-form").onsubmit = async (ev) => {
   ev.preventDefault();
-  await api("/api/caja/abrir", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
-  await loadCaja();
+  try {
+    await api("/api/caja/abrir", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
+    });
+    ev.target.reset();
+    ev.target.elements.apertura.value = "0";
+    await loadCaja();
+  } catch (error) {
+    alert(error.message);
+  }
 };
+
 $("#mov-caja-form").onsubmit = async (ev) => {
   ev.preventDefault();
-  await api("/api/caja/movimiento", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
-  ev.target.reset();
-  await loadCaja();
+  try {
+    await api("/api/caja/movimiento", {
+      method: "POST",
+      body: JSON.stringify(Object.fromEntries(new FormData(ev.target))),
+    });
+    ev.target.reset();
+    await loadCaja();
+  } catch (error) {
+    alert(error.message);
+  }
 };
+
+$("#cerrar-caja-form").addEventListener("input", (ev) => {
+  if (ev.target.matches("[name$='_contado']")) actualizarArqueo();
+});
+
+$("#billetes-grid").addEventListener("input", (ev) => {
+  if (ev.target.matches("[data-billete]")) actualizarBilletes();
+});
+
 $("#cerrar-caja-form").onsubmit = async (ev) => {
   ev.preventDefault();
-  await api("/api/caja/cerrar", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
-  ev.target.reset();
-  await loadCaja();
+
+  if (!confirm("¿Confirma el cierre de caja con los importes contados?")) return;
+
+  const data = Object.fromEntries(new FormData(ev.target));
+  data.billetes = $$("[data-billete]").map((input) => ({
+    denominacion: Number(input.dataset.billete),
+    cantidad: Number(input.value || 0),
+  }));
+
+  try {
+    const result = await api("/api/caja/cerrar", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+
+    alert(
+      Math.abs(Number(result.diferencia || 0)) < 0.01
+        ? "Caja cerrada correctamente, sin diferencias."
+        : `Caja cerrada con diferencia de ${money(result.diferencia)}.`
+    );
+
+    ev.target.reset();
+    await loadCaja();
+    await verDetalleCaja(result.caja_id);
+  } catch (error) {
+    alert(error.message);
+  }
 };
+
+$("#corregir-caja-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+
+  if (state.user?.rol !== "ADMIN") return alert("Solo el administrador puede corregir una caja.");
+  if (!confirm("¿Guardar la corrección administrativa de esta caja?")) return;
+
+  const data = Object.fromEntries(new FormData(ev.target));
+  const cajaId = data.caja_id;
+  delete data.caja_id;
+
+  try {
+    await api(`/api/caja/${cajaId}/corregir`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    alert("Caja corregida correctamente. La modificación quedó auditada.");
+    await loadCaja();
+    await verDetalleCaja(cajaId);
+  } catch (error) {
+    alert(error.message);
+  }
+};
+
+$("#cerrar-detalle-caja").onclick = () => {
+  $("#caja-detalle-panel").hidden = true;
+  state.cajaDetalle = null;
+};
+
+$("#imprimir-cierre").onclick = imprimirCierreCaja;
 
 $("#reportes-form").onsubmit = loadReportes;
 $("#print-report").onclick = () => {

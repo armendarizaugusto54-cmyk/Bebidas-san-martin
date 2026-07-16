@@ -880,3 +880,246 @@ input[readonly] {
     flex-direction: column;
   }
 }
+
+
+/* =========================================================
+   CAJA 2.0
+   ========================================================= */
+.caja-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-left: 6px solid var(--brand);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.caja-head h2 {
+  margin-bottom: 4px;
+  font-size: 22px;
+}
+
+.caja-estado-badge {
+  min-width: 125px;
+  padding: 11px 16px;
+  border-radius: 999px;
+  text-align: center;
+  font-weight: 900;
+}
+
+.caja-estado-badge.abierta {
+  background: #e8f7ef;
+  color: var(--good);
+}
+
+.caja-estado-badge.cerrada {
+  background: #ffeaea;
+  color: var(--bad);
+}
+
+.caja-resumen-cards {
+  grid-template-columns: repeat(4, minmax(170px, 1fr));
+}
+
+.caja-operaciones-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
+  gap: 16px;
+}
+
+.caja-form {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.caja-form button {
+  min-height: 44px;
+}
+
+.arqueo-panel {
+  border-left: 6px solid var(--good);
+}
+
+.arqueo-table-wrap {
+  overflow: auto;
+}
+
+.arqueo-table td,
+.arqueo-table th {
+  vertical-align: middle;
+}
+
+.arqueo-table input {
+  min-width: 150px;
+  font-weight: 700;
+}
+
+.arqueo-table tfoot th {
+  background: #edf7f1;
+  font-size: 16px;
+}
+
+.diff-sobra {
+  color: #a66a00;
+  font-weight: 800;
+}
+
+.arqueo-resultado {
+  margin: 14px 0;
+  padding: 14px;
+  border-radius: 8px;
+  text-align: center;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.arqueo-resultado.correcto {
+  background: #e8f7ef;
+  color: var(--good);
+}
+
+.arqueo-resultado.faltante {
+  background: #ffeaea;
+  color: var(--bad);
+}
+
+.arqueo-resultado.sobrante {
+  background: #fff4d6;
+  color: #9a6700;
+}
+
+.arqueo-resultado.neutro {
+  background: #edf2f7;
+  color: var(--muted);
+}
+
+.billetes-panel {
+  margin: 15px 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.billetes-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.billetes-grid label {
+  display: grid;
+  grid-template-columns: 1fr 70px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: white;
+}
+
+.billetes-grid input {
+  text-align: center;
+}
+
+.billetes-grid strong {
+  text-align: right;
+}
+
+.cerrar-caja-btn {
+  width: 100%;
+  min-height: 50px;
+  margin-top: 12px;
+  font-size: 17px;
+}
+
+.caja-detalle-panel {
+  border-left: 6px solid var(--brand);
+}
+
+.caja-detalle-resumen {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.caja-detalle-resumen article {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #f8fbff;
+}
+
+.caja-detalle-resumen span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.caja-detalle-resumen strong {
+  font-size: 22px;
+}
+
+.movimientos-title {
+  margin-top: 20px;
+}
+
+.corregir-caja-form {
+  margin-top: 20px;
+  padding: 16px;
+  border: 2px solid #efbcbc;
+  border-radius: 8px;
+  background: #fff7f7;
+}
+
+.correccion-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.corregir-caja-form button {
+  min-height: 44px;
+  margin-top: 12px;
+}
+
+@media (max-width: 1100px) {
+  .caja-operaciones-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .billetes-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .correccion-grid {
+    grid-template-columns: repeat(2, minmax(170px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .caja-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .caja-resumen-cards,
+  .caja-detalle-resumen,
+  .billetes-grid,
+  .correccion-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .billetes-grid label {
+    grid-template-columns: 1fr 80px 1fr;
+  }
+}

@@ -208,6 +208,16 @@ def ensure_schema():
                 accion TEXT,
                 detalle TEXT
             );
+            CREATE TABLE IF NOT EXISTS permisos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario_id INTEGER NOT NULL,
+                modulo TEXT NOT NULL,
+                ver INTEGER NOT NULL DEFAULT 0,
+                agregar INTEGER NOT NULL DEFAULT 0,
+                editar INTEGER NOT NULL DEFAULT 0,
+                eliminar INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(usuario_id, modulo)
+            );
             """
         )
         if not conn.execute("SELECT id FROM usuarios LIMIT 1").fetchone():
@@ -243,21 +253,77 @@ def ensure_schema():
             )
             """
         )
+
+        modulos = ("Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes", "Herramientas", "Usuarios")
+        usuarios_existentes = conn.execute("SELECT id,rol FROM usuarios").fetchall()
+        for usuario in usuarios_existentes:
+            for modulo in modulos:
+                existe = conn.execute(
+                    "SELECT id FROM permisos WHERE usuario_id=? AND modulo=?",
+                    (usuario["id"], modulo),
+                ).fetchone()
+                if existe:
+                    continue
+
+                if usuario["rol"] == "ADMIN":
+                    valores = (1, 1, 1, 1)
+                else:
+                    if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}:
+                        valores = (1, 1, 0, 0)
+                    else:
+                        valores = (0, 0, 0, 0)
+
+                conn.execute(
+                    """
+                    INSERT INTO permisos(usuario_id,modulo,ver,agregar,editar,eliminar)
+                    VALUES(?,?,?,?,?,?)
+                    """,
+                    (usuario["id"], modulo, *valores),
+                )
         conn.commit()
 
 
 ensure_schema()
 
 
+def user_permissions(usuario_id):
+    permisos = rows(
+        """
+        SELECT modulo,ver,agregar,editar,eliminar
+        FROM permisos
+        WHERE usuario_id=?
+        ORDER BY modulo
+        """,
+        (usuario_id,),
+    )
+    return {
+        permiso["modulo"]: {
+            "ver": bool(permiso["ver"]),
+            "agregar": bool(permiso["agregar"]),
+            "editar": bool(permiso["editar"]),
+            "eliminar": bool(permiso["eliminar"]),
+        }
+        for permiso in permisos
+    }
+
+
 def can(module, action="ver"):
     user = session.get("user")
     if not user:
         return False
+
     if user["rol"] == "ADMIN":
         return True
-    if action in {"ver", "agregar"} and module in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}:
-        return True
-    return False
+
+    action = "editar" if action == "modificar" else action
+    if action not in {"ver", "agregar", "editar", "eliminar"}:
+        return False
+
+    permiso = one(
+        f"SELECT {action} permitido FROM permisos WHERE usuario_id=? AND modulo=?",
+        (user["id"], module),
+    )
+    return bool(permiso and permiso["permitido"])
 
 
 def forbidden():
@@ -303,7 +369,205 @@ def index():
 
 @app.get("/api/me")
 def me():
-    return jsonify({"user": session["user"]})
+    user = session["user"]
+    return jsonify({
+        "user": user,
+        "permissions": user_permissions(user["id"]),
+    })
+
+
+MODULOS_PERMISOS = (
+    "Dashboard",
+    "Ventas",
+    "Productos",
+    "Clientes",
+    "Caja",
+    "Reportes",
+    "Herramientas",
+    "Usuarios",
+)
+
+
+def require_admin():
+    return bool(session.get("user") and session["user"]["rol"] == "ADMIN")
+
+
+@app.get("/api/usuarios")
+def listar_usuarios():
+    if not require_admin():
+        return forbidden()
+
+    usuarios = rows(
+        """
+        SELECT id,nombre,usuario,rol,activo
+        FROM usuarios
+        ORDER BY nombre
+        """
+    )
+
+    for usuario in usuarios:
+        usuario["permisos"] = user_permissions(usuario["id"])
+
+    return jsonify(usuarios)
+
+
+@app.post("/api/usuarios")
+def guardar_usuario():
+    if not require_admin():
+        return forbidden()
+
+    data = request.json or {}
+    usuario_id = data.get("id")
+    nombre = data.get("nombre", "").strip()
+    usuario = data.get("usuario", "").strip()
+    password = data.get("password", "")
+    rol = data.get("rol", "CAJERO").upper()
+    activo = 1 if int(data.get("activo", 1) or 0) else 0
+
+    if not nombre or not usuario:
+        return jsonify({"error": "Nombre y usuario son obligatorios."}), 400
+    if rol not in {"ADMIN", "CAJERO"}:
+        return jsonify({"error": "Rol inválido."}), 400
+    if not usuario_id and not password:
+        return jsonify({"error": "Ingrese una contraseña para el usuario nuevo."}), 400
+
+    if usuario_id and int(usuario_id) == int(session["user"]["id"]):
+        if not activo:
+            return jsonify({"error": "No puede desactivar su propio usuario."}), 400
+        if rol != "ADMIN":
+            return jsonify({"error": "No puede quitarse su propio rol de administrador."}), 400
+
+    try:
+        with db() as conn:
+            if usuario_id:
+                if password:
+                    conn.execute(
+                        """
+                        UPDATE usuarios
+                        SET nombre=?,usuario=?,password=?,rol=?,activo=?
+                        WHERE id=?
+                        """,
+                        (nombre, usuario, hash_password(password), rol, activo, usuario_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE usuarios
+                        SET nombre=?,usuario=?,rol=?,activo=?
+                        WHERE id=?
+                        """,
+                        (nombre, usuario, rol, activo, usuario_id),
+                    )
+            else:
+                usuario_id = conn.execute(
+                    """
+                    INSERT INTO usuarios(nombre,usuario,password,rol,activo)
+                    VALUES(?,?,?,?,?)
+                    """,
+                    (nombre, usuario, hash_password(password), rol, activo),
+                ).lastrowid
+
+                for modulo in MODULOS_PERMISOS:
+                    valores = (1, 1, 1, 1) if rol == "ADMIN" else (
+                        (1, 1, 0, 0)
+                        if modulo in {"Dashboard", "Ventas", "Productos", "Clientes", "Caja", "Reportes"}
+                        else (0, 0, 0, 0)
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO permisos(usuario_id,modulo,ver,agregar,editar,eliminar)
+                        VALUES(?,?,?,?,?,?)
+                        """,
+                        (usuario_id, modulo, *valores),
+                    )
+
+            if rol == "ADMIN":
+                for modulo in MODULOS_PERMISOS:
+                    conn.execute(
+                        """
+                        INSERT INTO permisos(usuario_id,modulo,ver,agregar,editar,eliminar)
+                        VALUES(?,?,1,1,1,1)
+                        ON CONFLICT(usuario_id,modulo)
+                        DO UPDATE SET ver=1,agregar=1,editar=1,eliminar=1
+                        """,
+                        (usuario_id, modulo),
+                    )
+
+            conn.commit()
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Ese nombre de usuario ya existe."}), 400
+
+    audit("usuario_guardado", f"{usuario} - {rol} - activo {activo}")
+    return jsonify({"ok": True, "id": usuario_id})
+
+
+@app.delete("/api/usuarios/<int:usuario_id>")
+def eliminar_usuario(usuario_id):
+    if not require_admin():
+        return forbidden()
+
+    if usuario_id == int(session["user"]["id"]):
+        return jsonify({"error": "No puede eliminar su propio usuario."}), 400
+
+    usuario = one("SELECT * FROM usuarios WHERE id=?", (usuario_id,))
+    if not usuario:
+        return jsonify({"error": "Usuario inexistente."}), 404
+
+    with db() as conn:
+        conn.execute("DELETE FROM permisos WHERE usuario_id=?", (usuario_id,))
+        conn.execute("DELETE FROM usuarios WHERE id=?", (usuario_id,))
+        conn.commit()
+
+    audit("usuario_eliminado", usuario["usuario"])
+    return jsonify({"ok": True})
+
+
+@app.put("/api/usuarios/<int:usuario_id>/permisos")
+def guardar_permisos(usuario_id):
+    if not require_admin():
+        return forbidden()
+
+    usuario = one("SELECT * FROM usuarios WHERE id=?", (usuario_id,))
+    if not usuario:
+        return jsonify({"error": "Usuario inexistente."}), 404
+
+    data = request.json or {}
+    permisos = data.get("permisos") or {}
+
+    if usuario["rol"] == "ADMIN":
+        permisos = {
+            modulo: {"ver": 1, "agregar": 1, "editar": 1, "eliminar": 1}
+            for modulo in MODULOS_PERMISOS
+        }
+
+    with db() as conn:
+        for modulo in MODULOS_PERMISOS:
+            valores = permisos.get(modulo) or {}
+            ver = 1 if valores.get("ver") else 0
+            agregar = 1 if valores.get("agregar") else 0
+            editar = 1 if valores.get("editar") else 0
+            eliminar = 1 if valores.get("eliminar") else 0
+
+            if not ver:
+                agregar = editar = eliminar = 0
+
+            conn.execute(
+                """
+                INSERT INTO permisos(usuario_id,modulo,ver,agregar,editar,eliminar)
+                VALUES(?,?,?,?,?,?)
+                ON CONFLICT(usuario_id,modulo)
+                DO UPDATE SET
+                    ver=excluded.ver,
+                    agregar=excluded.agregar,
+                    editar=excluded.editar,
+                    eliminar=excluded.eliminar
+                """,
+                (usuario_id, modulo, ver, agregar, editar, eliminar),
+            )
+        conn.commit()
+
+    audit("permisos_actualizados", f"Usuario {usuario['usuario']}")
+    return jsonify({"ok": True})
 
 
 @app.get("/api/options")

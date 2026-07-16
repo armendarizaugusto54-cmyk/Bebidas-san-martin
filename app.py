@@ -48,6 +48,11 @@ def money(value):
         return 0.0
 
 
+def calcular_precio_venta(precio_compra, ganancia, redondear=False):
+    precio = money(precio_compra) * (1 + money(ganancia) / 100)
+    return float(round(precio)) if redondear else round(precio, 2)
+
+
 def hash_password(password):
     salt = secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 120000).hex()
@@ -282,7 +287,7 @@ def options():
             "clientes": rows("SELECT id,nombre,saldo FROM clientes WHERE activo=1 ORDER BY nombre"),
             "productos": rows(
                 """
-                SELECT p.*, c.nombre categoria
+                SELECT p.*, c.nombre categoria, COALESCE(c.ganancia,0) ganancia_categoria
                 FROM productos p
                 LEFT JOIN categorias c ON c.id=p.categoria_id
                 WHERE p.activo=1
@@ -328,7 +333,7 @@ def productos():
         return forbidden()
     return jsonify(rows(
         """
-        SELECT p.*, c.nombre categoria
+        SELECT p.*, c.nombre categoria, COALESCE(c.ganancia,0) ganancia_categoria
         FROM productos p
         LEFT JOIN categorias c ON c.id=p.categoria_id
         WHERE p.activo=1
@@ -341,42 +346,65 @@ def productos():
 def save_producto():
     if not can("Productos", "agregar"):
         return forbidden()
+
     data = request.json or {}
     producto_id = data.get("id")
     codigo = data.get("codigo", "").strip()
     nombre = data.get("nombre", "").strip()
+    categoria_id = data.get("categoria_id") or None
+    precio_compra = money(data.get("precio_compra"))
+
     if not codigo or not nombre:
-        return jsonify({"error": "Codigo y nombre son obligatorios."}), 400
+        return jsonify({"error": "Código y nombre son obligatorios."}), 400
+    if not categoria_id:
+        return jsonify({"error": "Seleccione una categoría."}), 400
+    if precio_compra < 0:
+        return jsonify({"error": "El precio de compra no puede ser negativo."}), 400
+
+    categoria = one("SELECT id,nombre,ganancia FROM categorias WHERE id=?", (categoria_id,))
+    if not categoria:
+        return jsonify({"error": "La categoría seleccionada no existe."}), 400
+
+    precio_venta = calcular_precio_venta(precio_compra, categoria["ganancia"])
     params = (
         codigo,
         nombre,
-        data.get("categoria_id") or None,
+        categoria_id,
         data.get("marca", "").strip(),
-        money(data.get("precio_compra")),
-        money(data.get("precio_venta")),
+        precio_compra,
+        precio_venta,
         money(data.get("stock")),
         money(data.get("stock_minimo")),
     )
-    if producto_id:
-        execute(
-            """
-            UPDATE productos
-            SET codigo=?,nombre=?,categoria_id=?,marca=?,precio_compra=?,precio_venta=?,stock=?,stock_minimo=?
-            WHERE id=?
-            """,
-            params + (producto_id,),
-        )
-        audit("producto_editado", nombre)
-    else:
-        execute(
-            """
-            INSERT INTO productos(codigo,nombre,categoria_id,marca,precio_compra,precio_venta,stock,stock_minimo)
-            VALUES(?,?,?,?,?,?,?,?)
-            """,
-            params,
-        )
-        audit("producto_creado", nombre)
-    return jsonify({"ok": True})
+
+    try:
+        if producto_id:
+            execute(
+                """
+                UPDATE productos
+                SET codigo=?,nombre=?,categoria_id=?,marca=?,precio_compra=?,precio_venta=?,stock=?,stock_minimo=?
+                WHERE id=?
+                """,
+                params + (producto_id,),
+            )
+            audit("producto_editado", f"{nombre} - {categoria['nombre']} - venta {precio_venta}")
+        else:
+            execute(
+                """
+                INSERT INTO productos(codigo,nombre,categoria_id,marca,precio_compra,precio_venta,stock,stock_minimo)
+                VALUES(?,?,?,?,?,?,?,?)
+                """,
+                params,
+            )
+            audit("producto_creado", f"{nombre} - {categoria['nombre']} - venta {precio_venta}")
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Ya existe un producto con ese código."}), 400
+
+    return jsonify({
+        "ok": True,
+        "precio_venta": precio_venta,
+        "ganancia": money(categoria["ganancia"]),
+    })
 
 
 @app.delete("/api/productos/<int:producto_id>")
@@ -392,55 +420,136 @@ def delete_producto(producto_id):
 def precios_categoria():
     if not can("Productos", "agregar"):
         return forbidden()
+
     data = request.json or {}
     categoria_id = data.get("categoria_id")
-    porcentaje = money(data.get("porcentaje"))
+    ganancia = money(data.get("ganancia", data.get("porcentaje")))
     aplicar = int(data.get("aplicar", 0) or 0) == 1
     redondear = int(data.get("redondear", 1) or 0) == 1
-    if porcentaje == 0:
-        return jsonify({"error": "Ingrese porcentaje distinto de cero."}), 400
-    params = []
-    where = "activo=1"
-    label = "Todas"
-    if categoria_id and categoria_id not in {"__all__", "__none__"}:
-        where += " AND categoria_id=?"
-        params.append(categoria_id)
-        cat = one("SELECT nombre FROM categorias WHERE id=?", (categoria_id,))
-        label = cat["nombre"] if cat else "Categoria"
-    elif categoria_id == "__none__":
-        where += " AND categoria_id IS NULL"
-        label = "Sin categoria"
-    productos = rows(f"SELECT id,codigo,nombre,precio_venta FROM productos WHERE {where} ORDER BY nombre", params)
+
+    if not categoria_id:
+        return jsonify({"error": "Seleccione una categoría."}), 400
+    if ganancia < 0:
+        return jsonify({"error": "La ganancia no puede ser negativa."}), 400
+
+    categoria = one("SELECT * FROM categorias WHERE id=?", (categoria_id,))
+    if not categoria:
+        return jsonify({"error": "Categoría inexistente."}), 404
+
+    productos = rows(
+        """
+        SELECT id,codigo,nombre,precio_compra,precio_venta
+        FROM productos
+        WHERE activo=1 AND categoria_id=?
+        ORDER BY nombre
+        """,
+        (categoria_id,),
+    )
+
     cambios = []
-    for p in productos:
-        anterior = money(p["precio_venta"])
-        nuevo = anterior + anterior * porcentaje / 100
-        nuevo = round(nuevo) if redondear else round(nuevo, 2)
-        cambios.append({**p, "anterior": anterior, "nuevo": nuevo})
+    for producto in productos:
+        anterior = money(producto["precio_venta"])
+        nuevo = calcular_precio_venta(producto["precio_compra"], ganancia, redondear)
+        cambios.append({
+            **producto,
+            "anterior": anterior,
+            "nuevo": nuevo,
+            "diferencia": round(nuevo - anterior, 2),
+        })
+
     if aplicar:
         with db() as conn:
+            conn.execute("UPDATE categorias SET ganancia=? WHERE id=?", (ganancia, categoria_id))
             for item in cambios:
-                conn.execute("UPDATE productos SET precio_venta=? WHERE id=?", (item["nuevo"], item["id"]))
+                conn.execute(
+                    "UPDATE productos SET precio_venta=? WHERE id=?",
+                    (item["nuevo"], item["id"]),
+                )
             conn.commit()
-        audit("precios_actualizados", f"{label} {porcentaje}% {len(cambios)} productos")
-    return jsonify({"categoria": label, "cantidad": len(cambios), "cambios": cambios[:100], "aplicado": aplicar})
+        audit(
+            "categoria_precios_recalculados",
+            f"{categoria['nombre']} - ganancia {ganancia}% - {len(cambios)} productos",
+        )
+
+    return jsonify({
+        "categoria": categoria["nombre"],
+        "categoria_id": categoria_id,
+        "ganancia": ganancia,
+        "cantidad": len(cambios),
+        "cambios": cambios,
+        "aplicado": aplicar,
+    })
 
 
 @app.get("/api/categorias")
 def categorias():
-    return jsonify(rows("SELECT * FROM categorias ORDER BY nombre"))
+    return jsonify(rows(
+        """
+        SELECT c.*,
+               COUNT(p.id) productos
+        FROM categorias c
+        LEFT JOIN productos p ON p.categoria_id=c.id AND p.activo=1
+        GROUP BY c.id
+        ORDER BY c.nombre
+        """
+    ))
 
 
 @app.post("/api/categorias")
 def save_categoria():
+    if not can("Productos", "agregar"):
+        return forbidden()
+
     data = request.json or {}
+    categoria_id = data.get("id")
     nombre = data.get("nombre", "").strip()
+    ganancia = money(data.get("ganancia", 30))
+
     if not nombre:
-        return jsonify({"error": "Nombre obligatorio."}), 400
-    if data.get("id"):
-        execute("UPDATE categorias SET nombre=?, ganancia=? WHERE id=?", (nombre, money(data.get("ganancia", 30)), data["id"]))
-    else:
-        execute("INSERT INTO categorias(nombre,ganancia) VALUES(?,?)", (nombre, money(data.get("ganancia", 30))))
+        return jsonify({"error": "El nombre es obligatorio."}), 400
+    if ganancia < 0:
+        return jsonify({"error": "La ganancia no puede ser negativa."}), 400
+
+    try:
+        if categoria_id:
+            execute(
+                "UPDATE categorias SET nombre=?, ganancia=? WHERE id=?",
+                (nombre, ganancia, categoria_id),
+            )
+            audit("categoria_editada", f"{nombre} - {ganancia}%")
+        else:
+            categoria_id = execute(
+                "INSERT INTO categorias(nombre,ganancia) VALUES(?,?)",
+                (nombre, ganancia),
+            )
+            audit("categoria_creada", f"{nombre} - {ganancia}%")
+    except sqlite3.IntegrityError:
+        return jsonify({"error": "Ya existe una categoría con ese nombre."}), 400
+
+    return jsonify({"ok": True, "id": categoria_id})
+
+
+@app.delete("/api/categorias/<int:categoria_id>")
+def delete_categoria(categoria_id):
+    if not can("Productos", "eliminar"):
+        return forbidden()
+
+    categoria = one("SELECT * FROM categorias WHERE id=?", (categoria_id,))
+    if not categoria:
+        return jsonify({"error": "Categoría inexistente."}), 404
+
+    cantidad = one(
+        "SELECT COUNT(*) cantidad FROM productos WHERE categoria_id=? AND activo=1",
+        (categoria_id,),
+    )["cantidad"]
+
+    if cantidad:
+        return jsonify({
+            "error": f"No se puede borrar: la categoría tiene {cantidad} producto(s) activo(s)."
+        }), 400
+
+    execute("DELETE FROM categorias WHERE id=?", (categoria_id,))
+    audit("categoria_borrada", categoria["nombre"])
     return jsonify({"ok": True})
 
 

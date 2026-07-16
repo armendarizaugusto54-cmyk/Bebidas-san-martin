@@ -79,6 +79,12 @@ def audit(action, detail=""):
     )
 
 
+def ensure_column(conn, table, column, definition):
+    columnas = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columnas:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def ensure_schema():
     with db() as conn:
         conn.executescript(
@@ -216,6 +222,27 @@ def ensure_schema():
         if not conn.execute("SELECT id FROM categorias LIMIT 1").fetchone():
             conn.execute("INSERT INTO categorias(nombre,ganancia) VALUES('Bebidas',30)")
             conn.execute("INSERT INTO categorias(nombre,ganancia) VALUES('Cervezas',35)")
+
+        ensure_column(conn, "caja", "usuario_apertura", "TEXT")
+        ensure_column(conn, "caja", "usuario_cierre", "TEXT")
+        ensure_column(conn, "caja", "hora_apertura", "TEXT")
+        ensure_column(conn, "caja", "hora_cierre", "TEXT")
+        ensure_column(conn, "caja", "observaciones_apertura", "TEXT")
+
+        ensure_column(conn, "caja_arqueos", "cuenta_corriente_sistema", "REAL DEFAULT 0")
+        ensure_column(conn, "caja_arqueos", "cuenta_corriente_contado", "REAL DEFAULT 0")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS caja_billetes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                caja_id INTEGER,
+                denominacion REAL,
+                cantidad INTEGER DEFAULT 0,
+                subtotal REAL DEFAULT 0
+            )
+            """
+        )
         conn.commit()
 
 
@@ -812,99 +839,53 @@ def caja_actual():
     return one("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1")
 
 
-@app.get("/api/ventas")
-def ventas():
-    return jsonify(rows(
-        """
-        SELECT v.*, COALESCE(c.nombre,'Consumidor final') cliente
-        FROM ventas v
-        LEFT JOIN clientes c ON c.id=v.cliente_id
-        ORDER BY v.id DESC
-        LIMIT 100
-        """
-    ))
-
-
-@app.post("/api/ventas")
-def save_venta():
-    if not can("Ventas", "agregar"):
-        return forbidden()
-    data = request.json or {}
-    items = data.get("items") or []
-    if not items:
-        return jsonify({"error": "Agregue productos."}), 400
-    total = sum(money(i.get("subtotal")) for i in items)
-    cliente_id = data.get("cliente_id") or None
-    tipo = data.get("tipo", "EFECTIVO")
-
-    if tipo == "CUENTA CORRIENTE":
-        if not cliente_id:
-            return jsonify({"error": "Seleccione un cliente para vender a cuenta corriente."}), 400
-
-        cliente = one("SELECT * FROM clientes WHERE id=? AND activo=1", (cliente_id,))
-        if not cliente:
-            return jsonify({"error": "Cliente inexistente."}), 404
-
-        limite = money(cliente["limite_credito"])
-        saldo_proyectado = money(cliente["saldo"]) + total
-
-        if limite > 0 and saldo_proyectado > limite:
-            disponible = max(limite - money(cliente["saldo"]), 0)
-            return jsonify({
-                "error": f"El cliente supera su límite de crédito. Disponible: ${disponible:.2f}"
-            }), 400
-
-    with db() as conn:
-        try:
-            conn.execute("BEGIN")
-            venta_id = conn.execute(
-                "INSERT INTO ventas(fecha,cliente_id,tipo,total,usuario) VALUES(?,?,?,?,?)",
-                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), cliente_id, tipo, total, session["user"]["usuario"]),
-            ).lastrowid
-            for item in items:
-                prod = conn.execute("SELECT stock FROM productos WHERE id=?", (item["producto_id"],)).fetchone()
-                cantidad = money(item.get("cantidad"))
-                if not prod or money(prod["stock"]) < cantidad:
-                    raise ValueError("Stock insuficiente.")
-                precio = money(item.get("precio"))
-                subtotal = cantidad * precio
-                conn.execute("INSERT INTO venta_items(venta_id,producto_id,cantidad,precio,subtotal) VALUES(?,?,?,?,?)", (venta_id, item["producto_id"], cantidad, precio, subtotal))
-                conn.execute("UPDATE productos SET stock=stock-? WHERE id=?", (cantidad, item["producto_id"]))
-            caja = conn.execute("SELECT * FROM caja WHERE estado='ABIERTA' ORDER BY id DESC LIMIT 1").fetchone()
-            if tipo == "CUENTA CORRIENTE" and cliente_id:
-                saldo = money(conn.execute("SELECT saldo FROM clientes WHERE id=?", (cliente_id,)).fetchone()["saldo"]) + total
-                conn.execute("UPDATE clientes SET saldo=? WHERE id=?", (saldo, cliente_id))
-                conn.execute("INSERT INTO cuenta_corriente(cliente_id,fecha,comprobante,concepto,debe,haber,saldo,observaciones) VALUES(?,?,?,?,?,?,?,?)", (cliente_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), str(venta_id), "VENTA", total, 0, saldo, ""))
-            elif caja:
-                campo = {"EFECTIVO": "efectivo", "TRANSFERENCIA": "transferencia", "DEBITO": "debito", "CREDITO": "credito", "POSNET": "posnet"}.get(tipo, "efectivo")
-                conn.execute(f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?", (total, caja["id"]))
-            conn.commit()
-        except ValueError as exc:
-            conn.rollback()
-            return jsonify({"error": str(exc)}), 400
-    audit("venta_registrada", f"Venta {venta_id} total {total}")
-    return jsonify({"ok": True, "venta_id": venta_id})
-
-
-@app.get("/api/ventas/<int:venta_id>")
-def venta_detalle(venta_id):
-    venta = one("SELECT v.*, COALESCE(c.nombre,'Consumidor final') cliente FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id WHERE v.id=?", (venta_id,))
-    detalle = rows("SELECT i.*, p.codigo, p.nombre producto FROM venta_items i LEFT JOIN productos p ON p.id=i.producto_id WHERE venta_id=?", (venta_id,))
-    return jsonify({"venta": venta, "detalle": detalle})
+def sistema_caja(caja):
+    return {
+        "efectivo": money(caja.get("apertura")) + money(caja.get("efectivo")) + money(caja.get("ingresos")) - money(caja.get("gastos")),
+        "transferencia": money(caja.get("transferencia")),
+        "debito": money(caja.get("debito")),
+        "credito": money(caja.get("credito")),
+        "posnet": money(caja.get("posnet")),
+        "cuenta_corriente": money(caja.get("cuenta_corriente")),
+    }
 
 
 @app.get("/api/caja/actual")
 def api_caja_actual():
-    return jsonify(caja_actual() or {})
+    caja = caja_actual()
+    if not caja:
+        return jsonify({"caja": {}, "sistema": {}})
+    return jsonify({"caja": caja, "sistema": sistema_caja(caja)})
 
 
 @app.post("/api/caja/abrir")
 def abrir_caja():
     if caja_actual():
-        return jsonify({"error": "Ya hay caja abierta."}), 400
-    caja_id = execute("INSERT INTO caja(fecha,estado,apertura) VALUES(?,?,?)", (datetime.now().strftime("%Y-%m-%d"), "ABIERTA", money(request.json.get("apertura") if request.json else 0)))
-    audit("caja_abierta", caja_id)
-    return jsonify({"ok": True})
+        return jsonify({"error": "Ya hay una caja abierta."}), 400
+
+    data = request.json or {}
+    apertura = money(data.get("apertura"))
+    if apertura < 0:
+        return jsonify({"error": "La apertura no puede ser negativa."}), 400
+
+    ahora = datetime.now()
+    caja_id = execute(
+        """
+        INSERT INTO caja
+        (fecha,estado,apertura,usuario_apertura,hora_apertura,observaciones_apertura)
+        VALUES(?,?,?,?,?,?)
+        """,
+        (
+            ahora.strftime("%Y-%m-%d"),
+            "ABIERTA",
+            apertura,
+            session["user"]["usuario"],
+            ahora.strftime("%Y-%m-%d %H:%M:%S"),
+            data.get("observaciones", "").strip(),
+        ),
+    )
+    audit("caja_abierta", f"Caja {caja_id} - apertura {apertura}")
+    return jsonify({"ok": True, "caja_id": caja_id})
 
 
 @app.post("/api/caja/movimiento")
@@ -912,24 +893,43 @@ def caja_movimiento():
     caja = caja_actual()
     if not caja:
         return jsonify({"error": "No hay caja abierta."}), 400
+
     data = request.json or {}
     importe = money(data.get("importe"))
-    tipo = data.get("tipo", "ingreso")
-    campo = "gastos" if tipo == "gasto" else "ingresos"
-    execute(f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?", (importe, caja["id"]))
-    execute("INSERT INTO caja_movimientos(caja_id,fecha,tipo,descripcion,importe) VALUES(?,?,?,?,?)", (caja["id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), tipo, data.get("descripcion", ""), importe))
-    audit("movimiento_caja", f"{tipo} {importe}")
+    tipo = data.get("tipo", "ingreso").lower()
+    descripcion = data.get("descripcion", "").strip()
+
+    if tipo not in {"ingreso", "aporte", "gasto", "retiro"}:
+        return jsonify({"error": "Tipo de movimiento inválido."}), 400
+    if importe <= 0:
+        return jsonify({"error": "El importe debe ser mayor a cero."}), 400
+    if not descripcion:
+        return jsonify({"error": "Ingrese una descripción."}), 400
+
+    campo = "ingresos" if tipo in {"ingreso", "aporte"} else "gastos"
+
+    with db() as conn:
+        conn.execute(
+            f"UPDATE caja SET {campo}=COALESCE({campo},0)+? WHERE id=?",
+            (importe, caja["id"]),
+        )
+        conn.execute(
+            """
+            INSERT INTO caja_movimientos(caja_id,fecha,tipo,descripcion,importe)
+            VALUES(?,?,?,?,?)
+            """,
+            (
+                caja["id"],
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                tipo.upper(),
+                descripcion,
+                importe,
+            ),
+        )
+        conn.commit()
+
+    audit("movimiento_caja", f"Caja {caja['id']} - {tipo} {importe} - {descripcion}")
     return jsonify({"ok": True})
-
-
-def sistema_caja(caja):
-    return {
-        "efectivo": money(caja["apertura"]) + money(caja["efectivo"]) + money(caja["ingresos"]) - money(caja["gastos"]),
-        "transferencia": money(caja["transferencia"]),
-        "debito": money(caja["debito"]),
-        "credito": money(caja["credito"]),
-        "posnet": money(caja["posnet"]),
-    }
 
 
 @app.post("/api/caja/cerrar")
@@ -937,38 +937,207 @@ def cerrar_caja():
     caja = caja_actual()
     if not caja:
         return jsonify({"error": "No hay caja abierta."}), 400
+
     data = request.json or {}
     sistema = sistema_caja(caja)
-    contado = {k: money(data.get(f"{k}_contado")) for k in sistema}
-    total_sistema = sum(sistema.values())
-    total_contado = sum(contado.values())
-    dif = total_contado - total_sistema
+    medios = ["efectivo", "transferencia", "debito", "credito", "posnet", "cuenta_corriente"]
+
+    faltantes = [medio for medio in medios if f"{medio}_contado" not in data]
+    if faltantes:
+        return jsonify({"error": "Complete todos los importes contados."}), 400
+
+    contado = {medio: money(data.get(f"{medio}_contado")) for medio in medios}
+    total_sistema = round(sum(sistema.values()), 2)
+    total_contado = round(sum(contado.values()), 2)
+    diferencia = round(total_contado - total_sistema, 2)
+    ahora = datetime.now()
+
+    billetes = data.get("billetes") or []
+
     with db() as conn:
-        conn.execute("UPDATE caja SET estado='CERRADA', cierre=?, diferencia=? WHERE id=?", (total_contado, dif, caja["id"]))
         conn.execute(
             """
-            INSERT INTO caja_arqueos(caja_id,fecha,usuario,efectivo_sistema,efectivo_contado,transferencia_sistema,transferencia_contado,debito_sistema,debito_contado,credito_sistema,credito_contado,posnet_sistema,posnet_contado,total_sistema,total_contado,diferencia,observaciones)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            UPDATE caja
+            SET estado='CERRADA', cierre=?, diferencia=?,
+                usuario_cierre=?, hora_cierre=?
+            WHERE id=?
             """,
-            (caja["id"], datetime.now().strftime("%Y-%m-%d %H:%M:%S"), session["user"]["usuario"], sistema["efectivo"], contado["efectivo"], sistema["transferencia"], contado["transferencia"], sistema["debito"], contado["debito"], sistema["credito"], contado["credito"], sistema["posnet"], contado["posnet"], total_sistema, total_contado, dif, data.get("observaciones", "")),
+            (
+                total_contado,
+                diferencia,
+                session["user"]["usuario"],
+                ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                caja["id"],
+            ),
         )
+
+        conn.execute(
+            """
+            INSERT INTO caja_arqueos
+            (
+                caja_id,fecha,usuario,
+                efectivo_sistema,efectivo_contado,
+                transferencia_sistema,transferencia_contado,
+                debito_sistema,debito_contado,
+                credito_sistema,credito_contado,
+                posnet_sistema,posnet_contado,
+                cuenta_corriente_sistema,cuenta_corriente_contado,
+                total_sistema,total_contado,diferencia,observaciones
+            )
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                caja["id"],
+                ahora.strftime("%Y-%m-%d %H:%M:%S"),
+                session["user"]["usuario"],
+                sistema["efectivo"], contado["efectivo"],
+                sistema["transferencia"], contado["transferencia"],
+                sistema["debito"], contado["debito"],
+                sistema["credito"], contado["credito"],
+                sistema["posnet"], contado["posnet"],
+                sistema["cuenta_corriente"], contado["cuenta_corriente"],
+                total_sistema, total_contado, diferencia,
+                data.get("observaciones", "").strip(),
+            ),
+        )
+
+        conn.execute("DELETE FROM caja_billetes WHERE caja_id=?", (caja["id"],))
+        for item in billetes:
+            denominacion = money(item.get("denominacion"))
+            cantidad = int(item.get("cantidad") or 0)
+            if denominacion > 0 and cantidad > 0:
+                conn.execute(
+                    """
+                    INSERT INTO caja_billetes(caja_id,denominacion,cantidad,subtotal)
+                    VALUES(?,?,?,?)
+                    """,
+                    (caja["id"], denominacion, cantidad, denominacion * cantidad),
+                )
+
         conn.commit()
-    audit("caja_cerrada", f"Caja {caja['id']} dif {dif}")
-    return jsonify({"ok": True})
+
+    audit("caja_cerrada", f"Caja {caja['id']} - diferencia {diferencia}")
+    return jsonify({"ok": True, "diferencia": diferencia, "caja_id": caja["id"]})
 
 
 @app.get("/api/caja")
 def listar_caja():
-    return jsonify(rows("SELECT * FROM caja ORDER BY id DESC LIMIT 100"))
+    return jsonify(rows(
+        """
+        SELECT c.*,
+               COALESCE(a.total_sistema,0) total_sistema,
+               COALESCE(a.total_contado,c.cierre,0) total_contado,
+               COALESCE(a.corregido,0) corregido,
+               a.usuario_correccion,
+               a.motivo_correccion
+        FROM caja c
+        LEFT JOIN caja_arqueos a ON a.id=(
+            SELECT id FROM caja_arqueos
+            WHERE caja_id=c.id
+            ORDER BY id DESC LIMIT 1
+        )
+        ORDER BY c.id DESC
+        LIMIT 100
+        """
+    ))
 
 
 @app.get("/api/caja/<int:caja_id>")
 def detalle_caja(caja_id):
     caja = one("SELECT * FROM caja WHERE id=?", (caja_id,))
-    arqueo = one("SELECT * FROM caja_arqueos WHERE caja_id=? ORDER BY id DESC LIMIT 1", (caja_id,)) or {}
-    movs = rows("SELECT * FROM caja_movimientos WHERE caja_id=? ORDER BY id DESC", (caja_id,))
-    sistema = sistema_caja(caja)
-    return jsonify({"caja": caja, "arqueo": arqueo, "movimientos": movs, "sistema": sistema})
+    if not caja:
+        return jsonify({"error": "Caja inexistente."}), 404
+
+    arqueo = one(
+        "SELECT * FROM caja_arqueos WHERE caja_id=? ORDER BY id DESC LIMIT 1",
+        (caja_id,),
+    ) or {}
+    movimientos = rows(
+        "SELECT * FROM caja_movimientos WHERE caja_id=? ORDER BY id DESC",
+        (caja_id,),
+    )
+    billetes = rows(
+        "SELECT * FROM caja_billetes WHERE caja_id=? ORDER BY denominacion DESC",
+        (caja_id,),
+    )
+
+    return jsonify({
+        "caja": caja,
+        "arqueo": arqueo,
+        "movimientos": movimientos,
+        "billetes": billetes,
+        "sistema": sistema_caja(caja),
+    })
+
+
+@app.patch("/api/caja/<int:caja_id>/corregir")
+def corregir_caja(caja_id):
+    if session["user"]["rol"] != "ADMIN":
+        return forbidden()
+
+    data = request.json or {}
+    motivo = data.get("motivo", "").strip()
+    if not motivo:
+        return jsonify({"error": "Ingrese el motivo de la corrección."}), 400
+
+    arqueo = one(
+        "SELECT * FROM caja_arqueos WHERE caja_id=? ORDER BY id DESC LIMIT 1",
+        (caja_id,),
+    )
+    if not arqueo:
+        return jsonify({"error": "La caja no tiene un arqueo para corregir."}), 404
+
+    medios = ["efectivo", "transferencia", "debito", "credito", "posnet", "cuenta_corriente"]
+    contado = {
+        medio: money(data.get(f"{medio}_contado", arqueo.get(f"{medio}_contado", 0)))
+        for medio in medios
+    }
+    total_contado = round(sum(contado.values()), 2)
+    total_sistema = money(arqueo["total_sistema"])
+    diferencia = round(total_contado - total_sistema, 2)
+
+    with db() as conn:
+        conn.execute(
+            """
+            UPDATE caja_arqueos
+            SET efectivo_contado=?,
+                transferencia_contado=?,
+                debito_contado=?,
+                credito_contado=?,
+                posnet_contado=?,
+                cuenta_corriente_contado=?,
+                total_contado=?,
+                diferencia=?,
+                corregido=1,
+                usuario_correccion=?,
+                motivo_correccion=?
+            WHERE id=?
+            """,
+            (
+                contado["efectivo"],
+                contado["transferencia"],
+                contado["debito"],
+                contado["credito"],
+                contado["posnet"],
+                contado["cuenta_corriente"],
+                total_contado,
+                diferencia,
+                session["user"]["usuario"],
+                motivo,
+                arqueo["id"],
+            ),
+        )
+        conn.execute(
+            "UPDATE caja SET cierre=?, diferencia=? WHERE id=?",
+            (total_contado, diferencia, caja_id),
+        )
+        conn.commit()
+
+    audit(
+        "caja_corregida",
+        f"Caja {caja_id} - diferencia {diferencia} - motivo: {motivo}",
+    )
+    return jsonify({"ok": True, "diferencia": diferencia})
 
 
 @app.get("/api/reportes")

@@ -111,6 +111,8 @@ button {
 button:hover { background: var(--brand-dark); }
 button.secondary { background: #6b7789; }
 button.danger { background: var(--bad); }
+button.success { background: var(--good); }
+button.success:hover { background: #106338; }
 
 .view { display: none; }
 .view.active { display: block; }
@@ -216,6 +218,51 @@ label {
   background: #f8fbff;
 }
 
+.sale-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  padding-top: 12px;
+}
+
+.sale-actions button {
+  width: 100%;
+  min-height: 56px;
+}
+
+.sale-actions.final {
+  margin-top: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.sale-actions.final button {
+  min-height: 62px;
+  font-size: 16px;
+}
+
+.sale-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  white-space: normal;
+  text-align: center;
+  padding: 12px 16px;
+}
+
+.sale-button.add {
+  background: #1463d8;
+}
+
+.sale-button.print {
+  background: #64748b;
+}
+
+.sale-button.finish {
+  font-size: 17px;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -225,6 +272,11 @@ label {
   grid-template-columns: minmax(280px, 360px) 1fr;
   gap: 16px;
   align-items: start;
+}
+
+.sale-layout {
+  grid-template-columns: minmax(420px, 460px) 1fr;
+  gap: 22px;
 }
 
 .split > .panel form,
@@ -313,6 +365,7 @@ label {
   aside h1 { grid-column: 1 / -1; margin-bottom: 8px; }
   header,
   .split { grid-template-columns: 1fr; display: grid; }
+  .sale-layout { grid-template-columns: 1fr; }
   .cards,
   .grid-form { grid-template-columns: 1fr; }
   .product-picker { grid-template-columns: 1fr; }

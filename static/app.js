@@ -129,6 +129,17 @@ function closeProductSearch() {
   $("#producto-modal").hidden = true;
 }
 
+function shouldOpenProductSearch(ev) {
+  if (state.current !== "ventas") return false;
+  if (!$("#producto-modal").hidden) return false;
+  const tag = ev.target?.tagName?.toLowerCase();
+  const typing = tag === "input" || tag === "textarea" || tag === "select";
+  if (ev.key === "F3") return true;
+  if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "k") return true;
+  if (ev.key === "/" && !typing) return true;
+  return false;
+}
+
 function ticketTotal() {
   return state.ticket.reduce((a, i) => a + Number(i.subtotal), 0);
 }
@@ -599,14 +610,15 @@ $("#producto-modal").addEventListener("click", (ev) => {
   if (ev.target.id === "producto-modal") closeProductSearch();
 });
 document.addEventListener("keydown", (ev) => {
-  if (ev.key === "F3" && state.current === "ventas") {
+  if (shouldOpenProductSearch(ev)) {
     ev.preventDefault();
+    ev.stopPropagation();
     openProductSearch();
   }
   if (ev.key === "Escape" && !$("#producto-modal").hidden) {
     closeProductSearch();
   }
-});
+}, true);
 
 $("#add-item").onclick = () => {
   const p = currentProduct();

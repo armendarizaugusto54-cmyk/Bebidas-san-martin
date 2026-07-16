@@ -46,7 +46,7 @@
     </section>
 
     <section id="ventas" class="view">
-      <div class="split">
+      <div class="split sale-layout">
         <form id="venta-form" class="panel">
           <h2>Nueva venta</h2>
           <label>Cliente<select name="cliente_id" required></select></label>
@@ -58,7 +58,7 @@
           <label>Producto
             <select id="venta-producto" hidden></select>
             <div class="product-picker">
-              <input id="venta-producto-nombre" readonly placeholder="Presiona F3 para buscar producto">
+              <input id="venta-producto-nombre" readonly placeholder="Buscar producto: Ctrl+K, / o boton Buscar">
               <button type="button" id="buscar-producto">Buscar</button>
             </div>
           </label>
@@ -68,9 +68,13 @@
             <span id="ticket-items">0 items</span>
             <strong id="ticket-vuelto">Vuelto: $0.00</strong>
           </div>
-          <button type="button" id="add-item">Agregar producto</button>
-          <button type="button" class="secondary" id="print-ticket">Imprimir ultimo ticket</button>
-          <button type="submit">Finalizar venta</button>
+          <div class="sale-actions">
+            <button type="button" class="sale-button add" id="add-item">Agregar producto</button>
+            <button type="button" class="sale-button print" id="print-ticket">Imprimir ultimo ticket</button>
+          </div>
+          <div class="sale-actions final">
+            <button type="submit" class="sale-button finish success">Finalizar venta</button>
+          </div>
         </form>
         <div class="panel">
           <h2>Ticket</h2>

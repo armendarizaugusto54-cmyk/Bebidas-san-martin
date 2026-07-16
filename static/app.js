@@ -2,6 +2,8 @@ const $ = (sel, ctx = document) => ctx.querySelector(sel);
 const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const money = (n) => `$${Number(n || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 let state = { options: {}, productos: [], ticket: [], current: "inicio", permisos: {}, user: null, selectedProductId: null, lastSale: null, lastReport: null };
+let cajaActual = {};
+let correccionCaja = null;
 const viewModules = {
   inicio: "Dashboard",
   ventas: "Ventas",
@@ -354,12 +356,14 @@ async function loadCompras() {
 
 async function loadCaja() {
   const actual = await api("/api/caja/actual");
+  cajaActual = actual || {};
   const entradas = Number(actual.efectivo || 0) + Number(actual.transferencia || 0) + Number(actual.debito || 0) + Number(actual.credito || 0) + Number(actual.posnet || 0) + Number(actual.ingresos || 0);
   const total = Number(actual.apertura || 0) + entradas - Number(actual.gastos || 0);
   $("#caja-estado").textContent = actual.id ? "Abierta" : "Cerrada";
   $("#caja-apertura").textContent = money(actual.apertura);
   $("#caja-entradas").textContent = money(entradas);
   $("#caja-total").textContent = money(total);
+  renderArqueo();
   table($("#tabla-caja"), [
     { key: "fecha", label: "Fecha" },
     { key: "estado", label: "Estado" },
@@ -370,6 +374,90 @@ async function loadCaja() {
     { key: "cierre", label: "Cierre", format: money },
     { key: "diferencia", label: "Diferencia", format: money },
   ], await api("/api/caja"));
+  await loadCorreccionArqueo();
+}
+
+function arqueoSistema() {
+  return {
+    efectivo: Number(cajaActual.apertura || 0) + Number(cajaActual.efectivo || 0) + Number(cajaActual.ingresos || 0) - Number(cajaActual.gastos || 0),
+    transferencia: Number(cajaActual.transferencia || 0),
+    debito: Number(cajaActual.debito || 0),
+    credito: Number(cajaActual.credito || 0),
+    posnet: Number(cajaActual.posnet || 0),
+  };
+}
+
+function renderArqueo() {
+  const sistema = arqueoSistema();
+  const form = $("#cierre-form");
+  if (!form) return;
+  let totalSistema = 0;
+  let totalContado = 0;
+  ["efectivo", "transferencia", "debito", "credito", "posnet"].forEach((medio) => {
+    const esperado = sistema[medio] || 0;
+    const contado = Number(form.elements[`${medio}_contado`]?.value || 0);
+    totalSistema += esperado;
+    totalContado += contado;
+    $(`#sis-${medio}`).textContent = money(esperado);
+    const dif = contado - esperado;
+    const difEl = $(`#dif-${medio}`);
+    difEl.textContent = money(dif);
+    difEl.classList.toggle("diff-ok", Math.abs(dif) < 0.01);
+    difEl.classList.toggle("diff-bad", Math.abs(dif) >= 0.01);
+  });
+  const totalDif = totalContado - totalSistema;
+  $("#arqueo-sistema").textContent = money(totalSistema);
+  $("#arqueo-contado").textContent = money(totalContado);
+  $("#arqueo-diferencia").textContent = money(totalDif);
+  $("#arqueo-diferencia").classList.toggle("diff-ok", Math.abs(totalDif) < 0.01);
+  $("#arqueo-diferencia").classList.toggle("diff-bad", Math.abs(totalDif) >= 0.01);
+}
+
+async function loadCorreccionArqueo() {
+  const form = $("#corregir-arqueo-form");
+  if (!form) return;
+  if (state.user?.rol !== "ADMIN") {
+    form.hidden = true;
+    return;
+  }
+  const data = await api("/api/caja/ultimo-arqueo");
+  correccionCaja = data;
+  if (!data.caja?.id) {
+    form.hidden = true;
+    return;
+  }
+  form.hidden = false;
+  form.elements.caja_id.value = data.caja.id;
+  form.elements.arqueo_id.value = data.arqueo?.id || "";
+  ["efectivo", "transferencia", "debito", "credito", "posnet"].forEach((medio) => {
+    form.elements[`${medio}_contado`].value = Number(data.contado?.[medio] || 0).toFixed(2);
+  });
+  renderCorreccionArqueo();
+}
+
+function renderCorreccionArqueo() {
+  const form = $("#corregir-arqueo-form");
+  if (!form || !correccionCaja?.sistema) return;
+  let totalSistema = 0;
+  let totalContado = 0;
+  ["efectivo", "transferencia", "debito", "credito", "posnet"].forEach((medio) => {
+    const esperado = Number(correccionCaja.sistema[medio] || 0);
+    const contado = Number(form.elements[`${medio}_contado`]?.value || 0);
+    totalSistema += esperado;
+    totalContado += contado;
+    $(`#corr-sis-${medio}`).textContent = money(esperado);
+    const dif = contado - esperado;
+    const difEl = $(`#corr-dif-${medio}`);
+    difEl.textContent = money(dif);
+    difEl.classList.toggle("diff-ok", Math.abs(dif) < 0.01);
+    difEl.classList.toggle("diff-bad", Math.abs(dif) >= 0.01);
+  });
+  const totalDif = totalContado - totalSistema;
+  $("#corr-sistema").textContent = money(totalSistema);
+  $("#corr-contado").textContent = money(totalContado);
+  $("#corr-diferencia").textContent = money(totalDif);
+  $("#corr-diferencia").classList.toggle("diff-ok", Math.abs(totalDif) < 0.01);
+  $("#corr-diferencia").classList.toggle("diff-bad", Math.abs(totalDif) >= 0.01);
 }
 
 async function loadReportes(ev) {
@@ -696,6 +784,17 @@ $("#cierre-form").onsubmit = async (ev) => {
   await api("/api/caja/cerrar", { method: "POST", body: JSON.stringify(Object.fromEntries(new FormData(ev.target))) });
   ev.target.reset();
   await loadCaja();
+};
+$("#cierre-form").addEventListener("input", renderArqueo);
+$("#corregir-arqueo-form").addEventListener("input", renderCorreccionArqueo);
+$("#corregir-arqueo-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const data = Object.fromEntries(new FormData(ev.target));
+  if (!data.motivo?.trim()) return alert("Ingrese el motivo de correccion.");
+  await api("/api/caja/corregir-arqueo", { method: "POST", body: JSON.stringify(data) });
+  ev.target.elements.motivo.value = "";
+  await loadCaja();
+  alert("Correccion guardada.");
 };
 
 $("#crear-backup").onclick = async () => {

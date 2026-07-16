@@ -279,6 +279,64 @@ label {
   gap: 22px;
 }
 
+.caja-layout {
+  grid-template-columns: minmax(260px, 320px) minmax(260px, 320px) 1fr;
+}
+
+.arqueo-panel {
+  min-width: 520px;
+}
+
+.arqueo-grid {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(90px, 1fr) minmax(110px, 1fr) minmax(80px, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.arqueo-grid input {
+  min-height: 34px;
+}
+
+.arqueo-head {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.arqueo-grid strong,
+.arqueo-grid span {
+  padding: 8px 6px;
+  border-radius: 6px;
+  background: #f8fbff;
+  font-size: 13px;
+}
+
+.arqueo-total {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f8fbff;
+}
+
+.diff-ok {
+  color: var(--good);
+  font-weight: 800;
+}
+
+.diff-bad {
+  color: var(--bad);
+  font-weight: 800;
+}
+
+.admin-correction {
+  border-color: #f1b7b7;
+  background: #fffafa;
+}
+
 .split > .panel form,
 .panel form { display: grid; gap: 12px; }
 
@@ -366,6 +424,9 @@ label {
   header,
   .split { grid-template-columns: 1fr; display: grid; }
   .sale-layout { grid-template-columns: 1fr; }
+  .caja-layout { grid-template-columns: 1fr; }
+  .arqueo-panel { min-width: 0; }
+  .arqueo-grid { grid-template-columns: 1fr; }
   .cards,
   .grid-form { grid-template-columns: 1fr; }
   .product-picker { grid-template-columns: 1fr; }

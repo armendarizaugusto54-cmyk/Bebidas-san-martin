@@ -9,13 +9,14 @@
 <body>
   <aside>
     <h1>Bebidas<br>San Martin</h1>
-    <button data-view="inicio" class="active">Inicio</button>
-    <button data-view="ventas">Ventas</button>
-    <button data-view="productos">Productos</button>
-    <button data-view="clientes">Clientes</button>
-    <button data-view="caja">Caja</button>
-    <button data-view="reportes">Reportes</button>
-    <button data-view="herramientas">Herramientas</button>
+    <button data-view="inicio" data-module="Dashboard" class="active">Inicio</button>
+    <button data-view="ventas" data-module="Ventas">Ventas</button>
+    <button data-view="productos" data-module="Productos">Productos</button>
+    <button data-view="clientes" data-module="Clientes">Clientes</button>
+    <button data-view="caja" data-module="Caja">Caja</button>
+    <button data-view="reportes" data-module="Reportes">Reportes</button>
+    <button data-view="herramientas" data-module="Herramientas">Herramientas</button>
+    <button data-view="usuarios" data-module="Usuarios">Usuarios y permisos</button>
     <a href="{{ url_for('logout') }}">Salir</a>
   </aside>
   <main>
@@ -650,6 +651,102 @@
       <div class="cards"><article><span>Ventas</span><strong id="rep-ventas">0</strong></article><article><span>Total</span><strong id="rep-total">$0</strong></article><article><span>Stock bajo</span><strong id="rep-stock">0</strong></article><article><span>Periodo</span><strong id="rep-periodo">-</strong></article></div>
       <div class="split"><div class="panel"><h2>Medios de pago</h2><table id="tabla-medios"></table></div><div class="panel"><h2>Productos mas vendidos</h2><table id="tabla-top"></table></div></div>
       <div class="panel"><h2>Stock bajo</h2><table id="tabla-bajos"></table></div>
+    </section>
+
+    <section id="usuarios" class="view">
+      <div class="usuarios-head">
+        <div>
+          <h2>Usuarios y permisos</h2>
+          <p class="muted">Alta de usuarios, contraseñas, roles y acceso por módulo.</p>
+        </div>
+        <button type="button" class="secondary" id="nuevo-usuario">Nuevo usuario</button>
+      </div>
+
+      <div class="usuarios-layout">
+        <form id="usuario-form" class="panel usuario-form">
+          <input type="hidden" name="id">
+
+          <div class="panel-head">
+            <div>
+              <h2 id="usuario-form-title">Nuevo usuario</h2>
+              <p class="muted">La contraseña solo es obligatoria al crear.</p>
+            </div>
+          </div>
+
+          <label>Nombre completo
+            <input name="nombre" required autocomplete="off">
+          </label>
+
+          <label>Usuario
+            <input name="usuario" required autocomplete="off">
+          </label>
+
+          <label>Contraseña
+            <input name="password" type="password" autocomplete="new-password">
+          </label>
+
+          <label>Rol
+            <select name="rol">
+              <option value="CAJERO">CAJERO</option>
+              <option value="ADMIN">ADMIN</option>
+            </select>
+          </label>
+
+          <label class="check usuario-activo">
+            <input name="activo" type="checkbox" value="1" checked>
+            Usuario activo
+          </label>
+
+          <div class="usuario-form-actions">
+            <button type="button" class="secondary" id="cancelar-usuario">Cancelar</button>
+            <button type="submit">Guardar usuario</button>
+          </div>
+        </form>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Usuarios registrados</h2>
+              <p class="muted">Seleccione Permisos para configurar el acceso.</p>
+            </div>
+          </div>
+          <table id="tabla-usuarios"></table>
+        </div>
+      </div>
+
+      <div id="permisos-panel" class="panel permisos-panel" hidden>
+        <div class="panel-head">
+          <div>
+            <h2 id="permisos-title">Permisos</h2>
+            <p class="muted">Sin permiso Ver, el módulo desaparece del menú.</p>
+          </div>
+          <button type="button" class="secondary" id="cerrar-permisos">Cerrar</button>
+        </div>
+
+        <input type="hidden" id="permisos-usuario-id">
+
+        <div class="permisos-acciones-masivas">
+          <button type="button" class="secondary" id="marcar-todos-permisos">Marcar todos</button>
+          <button type="button" class="secondary" id="desmarcar-todos-permisos">Desmarcar todos</button>
+        </div>
+
+        <div class="permisos-table-wrap">
+          <table class="permisos-table">
+            <thead>
+              <tr>
+                <th>Módulo</th>
+                <th>Ver</th>
+                <th>Agregar</th>
+                <th>Editar</th>
+                <th>Eliminar</th>
+              </tr>
+            </thead>
+            <tbody id="permisos-grid"></tbody>
+          </table>
+        </div>
+
+        <button type="button" class="success guardar-permisos-btn" id="guardar-permisos">Guardar permisos</button>
+      </div>
     </section>
 
     <section id="herramientas" class="view">

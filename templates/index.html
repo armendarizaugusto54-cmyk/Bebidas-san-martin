@@ -493,6 +493,22 @@
         <article><span>Última diferencia</span><strong id="caja-diferencia">$0.00</strong></article>
       </div>
 
+      <div id="caja-admin-alerta" class="panel caja-admin-alerta" hidden>
+        <div class="panel-head">
+          <div>
+            <h2>Administración de caja abierta</h2>
+            <p class="muted">Use esta opción solamente si una caja quedó trabada o abierta por error.</p>
+          </div>
+        </div>
+
+        <form id="forzar-cierre-form" class="forzar-cierre-form">
+          <label>Motivo obligatorio
+            <input name="motivo" required autocomplete="off" placeholder="Ej.: quedó abierta por error al cerrar el turno">
+          </label>
+          <button type="submit" class="danger">Forzar cierre de caja</button>
+        </form>
+      </div>
+
       <div class="caja-operaciones-grid">
         <form id="abrir-caja-form" class="panel caja-form">
           <div class="panel-head">
